@@ -66,9 +66,16 @@ jobs:
           cmake -B build-armv7 \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=armeabi-v7a \
+            -DANDROID_ARM_NEON=ON \
             -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_C_FLAGS="-mfloat-abi=softfp -mfpu=neon-vfpv4" \
+            -DCMAKE_CXX_FLAGS="-mfloat-abi=softfp -mfpu=neon-vfpv4" \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_OPENMP=OFF \
+            -DGGML_NATIVE=OFF \
+            -DGGML_LLAMAFILE=OFF \
+            -DGGML_CPU_ARM_ARCH=armv7-a \
+            -DGGML_CPU_REPACK=OFF \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build-armv7 -j$(nproc) --target llama-server
 
