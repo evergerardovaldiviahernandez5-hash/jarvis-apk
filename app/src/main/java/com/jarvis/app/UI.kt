@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.interaction.MutableInteractionSource
 
 @Composable
 fun NovaApp(
@@ -54,16 +55,17 @@ fun NovaApp(
     val palette = NovaTheme.palette
     var sidebarOpen by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
+    val wide = isWideScreen()
 
     Box(modifier.fillMaxSize().background(palette.bg)) {
         Row(Modifier.fillMaxSize()) {
-            if (sidebarOpen || isWideScreen()) {
+            if (wide) {
                 Sidebar(
                     state = state,
-                    onNewChat = { onNewChat(); sidebarOpen = false },
-                    onOpenChat = { onOpenChat(it); sidebarOpen = false },
+                    onNewChat = onNewChat,
+                    onOpenChat = onOpenChat,
                     onDeleteChat = onDeleteChat,
-                    onOpenSettings = { onOpenSettings(); sidebarOpen = false },
+                    onOpenSettings = onOpenSettings,
                     modifier = Modifier.width(272.dp).fillMaxHeight()
                 )
             }
@@ -83,24 +85,39 @@ fun NovaApp(
             )
         }
 
+        // Drawer móvil: scrim primero, sidebar ENCIMA
+        if (!wide && sidebarOpen) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { sidebarOpen = false }
+            )
+            Sidebar(
+                state = state,
+                onNewChat = { onNewChat(); sidebarOpen = false },
+                onOpenChat = { onOpenChat(it); sidebarOpen = false },
+                onDeleteChat = onDeleteChat,
+                onOpenSettings = { onOpenSettings(); sidebarOpen = false },
+                modifier = Modifier.width(272.dp).fillMaxHeight()
+            )
+        }
+
         if (showModelPicker) {
             ModelPickerModal(
                 state = state,
                 onSelect = { file -> onSelectModel(file); showModelPicker = false },
-                onScan = { onScanModels() },
+                onScan = onScanModels,
                 onStop = { onStopServer(); showModelPicker = false },
                 onDismiss = { showModelPicker = false }
             )
         }
-
-        AnimatedVisibility(visible = sidebarOpen && !isWideScreen()) {
-            Box(
-                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f))
-                    .clickable { sidebarOpen = false }
-            )
-        }
     }
 }
+
 
 @Composable
 private fun isWideScreen(): Boolean {
@@ -121,7 +138,15 @@ fun Sidebar(
     modifier: Modifier = Modifier
 ) {
     val p = NovaTheme.palette
-    Column(modifier.background(p.sidebar).border(1.dp, p.borderSoft)) {
+    Column(
+        modifier
+            .background(p.sidebar)
+            .border(1.dp, p.borderSoft)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {}
+    ) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp, 14.dp),
             verticalAlignment = Alignment.CenterVertically

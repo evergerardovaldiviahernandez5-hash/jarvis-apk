@@ -63,10 +63,11 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
         }
         _state.value = _state.value.copy(modelsLoading = true, serverError = null)
         viewModelScope.launch(Dispatchers.IO) {
+            // /sdcard, /storage/self/primary y /storage/emulated/0 son el MISMO
+            // sitio vía symlink. Escaneamos solo el real para no duplicar.
             val roots = listOf(
-                File("/sdcard"),
-                File("/storage/emulated/0"),
-                File("/storage/self/primary"),
+                File("/storage/emulated/0/Download"),
+                File("/storage/emulated/0/Documents"),
                 getApplication<Application>().filesDir
             ).filter { it.exists() }
 
@@ -75,17 +76,17 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
             val skipDirs = setOf("Android", ".thumbnails", ".cache", ".trash")
 
             for (root in roots) {
-                scanRecursive(root, found, seen, skipDirs, maxDepth = 6)
+                scanRecursive(root, found, seen, skipDirs, 6, 0)
             }
 
-            val list = found
-                .distinctBy { it.absolutePath }
-                .sortedByDescending { it.length() }
+            val list = found.sortedByDescending { it.length() }
 
             _state.value = _state.value.copy(
                 availableModels = list,
                 modelsLoading = false,
-                serverError = if (list.isEmpty()) "No se encontraron modelos .gguf en el dispositivo" else null
+                serverError = if (list.isEmpty())
+                    "No se encontraron modelos .gguf. Ponlos en /sdcard/Download/"
+                else null
             )
         }
     }
@@ -96,7 +97,7 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
         seen: MutableSet<String>,
         skip: Set<String>,
         maxDepth: Int,
-        depth: Int = 0
+        depth: Int
     ) {
         if (depth > maxDepth) return
         val files = try { dir.listFiles() ?: return } catch (_: Exception) { return }
@@ -106,7 +107,9 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
                 if (!f.canRead()) continue
                 scanRecursive(f, out, seen, skip, maxDepth, depth + 1)
             } else if (f.isFile && f.name.lowercase().endsWith(".gguf")) {
-                if (seen.add(f.absolutePath)) out.add(f)
+                // Dedup por canonicalPath (resuelve symlinks)
+                val key = try { f.canonicalPath } catch (_: Exception) { f.absolutePath }
+                if (seen.add(key)) out.add(f)
             }
         }
     }
