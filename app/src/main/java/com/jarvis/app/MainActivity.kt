@@ -1,119 +1,150 @@
 package com.jarvis.app
 
 import android.annotation.SuppressLint
-import android.net.Uri
 import android.os.Bundle
-import android.util.Log
-import android.view.View
+import android.view.ViewGroup
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
-import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.TextView
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
+import androidx.activity.viewModels
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ComponentActivity() {
 
-    private lateinit var webView: WebView
-    private lateinit var overlay: LinearLayout
-    private lateinit var loading: ProgressBar
-    private lateinit var statusText: TextView
-    private lateinit var pickButton: Button
-    private lateinit var llmServer: LlamaServer
-    private val scope = CoroutineScope(Dispatchers.Main)
+    private val vm: JarvisViewModel by viewModels()
 
-    private val pickModel = registerForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) copyAndStart(uri)
-    }
-
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        setContent {
+            val state by vm.state.collectAsState()
+            var showSettings by remember { mutableStateOf(false) }
 
-        webView = findViewById(R.id.webView)
-        overlay = findViewById(R.id.overlay)
-        loading = findViewById(R.id.progressBar)
-        statusText = findViewById(R.id.statusText)
-        pickButton = findViewById(R.id.pickModelBtn)
+            NovaTheme {
+                Box(Modifier.fillMaxSize()) {
+                    NovaApp(
+                        state = state,
+                        onNewChat = { vm.newChat() },
+                        onOpenChat = { vm.openChat(it) },
+                        onDeleteChat = { vm.deleteChat(it) },
+                        onSend = { vm.sendMessage(it) },
+                        onCancel = { vm.cancelStream() },
+                        onStartServer = { vm.startServer(it) },
+                        onStopServer = { vm.stopServer() },
+                        onScanModels = { vm.scanModels() },
+                        onOpenSettings = { showSettings = true }
+                    )
 
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true
-            allowFileAccess = true
-            mediaPlaybackRequiresUserGesture = false
-        }
-        webView.webViewClient = WebViewClient()
+                    if (showSettings) {
+                        SettingsWebView(
+                            serverReady = state.serverReady,
+                            onClose = { showSettings = false },
+                            onPickModel = { vm.scanModels() }
+                        )
+                    }
+                }
 
-        llmServer = LlamaServer(this)
-
-        pickButton.setOnClickListener {
-            pickModel.launch(arrayOf("*/*"))
-        }
-
-        // Auto-arranque si ya hay un modelo guardado
-        val saved = ModelManager.getSavedModel(this)
-        if (saved != null) {
-            startServer(saved.absolutePath)
-        }
-    }
-
-    private fun copyAndStart(uri: Uri) {
-        scope.launch {
-            statusText.text = "Copiando modelo..."
-            loading.visibility = View.VISIBLE
-            pickButton.visibility = View.GONE
-
-            val dest = withContext(Dispatchers.IO) {
-                ModelManager.copyToInternal(this@MainActivity, uri)
-            }
-
-            if (dest == null) {
-                loading.visibility = View.GONE
-                pickButton.visibility = View.VISIBLE
-                statusText.text = "Error copiando el modelo"
-                return@launch
-            }
-            startServer(dest.absolutePath)
-        }
-    }
-
-    private fun startServer(modelPath: String) {
-        scope.launch {
-            statusText.text = "Iniciando Jarvis..."
-            loading.visibility = View.VISIBLE
-            pickButton.visibility = View.GONE
-
-            val ok = withContext(Dispatchers.IO) {
-                llmServer.start(modelPath) &&
-                    LlamaServer.waitForPort(8081, 180_000)
-            }
-
-            if (ok) {
-                statusText.text = "Listo"
-                overlay.visibility = View.GONE
-                webView.visibility = View.VISIBLE
-                webView.loadUrl("http://127.0.0.1:8081")
-            } else {
-                loading.visibility = View.GONE
-                pickButton.visibility = View.VISIBLE
-                statusText.text = "Error al iniciar. Prueba otro modelo .gguf"
+                BackHandler(enabled = showSettings) { showSettings = false }
             }
         }
-    }
-
-    override fun onDestroy() {
-        llmServer.stop()
-        super.onDestroy()
     }
 }
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun SettingsWebView(
+    serverReady: Boolean,
+    onClose: () -> Unit,
+    onPickModel: () -> Unit
+) {
+    val p = NovaTheme.palette
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    Box(Modifier.fillMaxSize().background(p.bg)) {
+        if (!serverReady) {
+            // Si no hay servidor, no podemos cargar la WebUI de llama.cpp
+            Column(
+                Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    "Primero carga un modelo",
+                    color = p.text, fontSize = 18.spFallback(), fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "La configuración avanzada la sirve llama.cpp.\nNecesitas un modelo cargado para acceder.",
+                    color = p.muted,
+                    fontSize = 14.spFallback(),
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+                Spacer(Modifier.height(20.dp))
+                androidx.compose.material3.Button(
+                    onClick = { onPickModel(); onClose() },
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = p.accent)
+                ) {
+                    Text("Buscar modelos")
+                }
+            }
+        } else {
+            AndroidView(
+                factory = { ctx ->
+                    WebView(ctx).apply {
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.allowFileAccess = true
+                        webViewClient = WebViewClient()
+                        loadUrl("http://127.0.0.1:8081")
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+
+        // Botón flotante de cerrar
+        Box(
+            Modifier.align(Alignment.TopEnd).padding(16.dp)
+                .size(44.dp).clip(CircleShape).background(p.bgElev)
+                .clickableNoRipple(onClose),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Close, null, tint = p.text)
+        }
+    }
+}
+
+// Helpers para no importar más cosas
+private fun Int.spFallback() = androidx.compose.ui.unit.TextUnit(
+    this.toFloat(), androidx.compose.ui.unit.TextUnitType.Sp
+)
+
+private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
+    this.then(
+        androidx.compose.foundation.clickable(
+            interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
+            indication = null,
+            onClick = onClick
+        )
+    )

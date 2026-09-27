@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Jarvis" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:statusBarColor">#C5A44A</item>
-        <item name="colorPrimary">#C5A44A</item>
+    <style name="Theme.Jarvis" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FAF9F5</item>
+        <item name="android:statusBarColor">#FAF9F5</item>
+        <item name="android:navigationBarColor">#FAF9F5</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 </resources>

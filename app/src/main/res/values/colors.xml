@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <color name="gold">#C5A44A</color>
-    <color name="bg_light">#FFFDF9</color>
-    <color name="bg_dark">#1A1611</color>
+    <color name="ic_launcher_background">#FFFFFF</color>
 </resources>
