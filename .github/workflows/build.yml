@@ -39,14 +39,28 @@ jobs:
           echo "$PWD/gradle-8.7/bin" >> $GITHUB_PATH
 
       - name: Cache llama.cpp
+        id: cache-llama
         uses: actions/cache@v4
         with:
           path: llama.cpp
-          key: llama-v2-${{ runner.os }}
+          key: llama-v5-${{ runner.os }}
 
       - name: Clone llama.cpp
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
+        if: steps.cache-llama.outputs.cache-hit != 'true'
+        run: |
+          rm -rf llama.cpp
+          for i in 1 2 3; do
+            echo "Intento $i..."
+            if git clone --depth 1 https://github.com/ggml-org/llama.cpp.git; then
+              echo "✅ Clone exitoso"
+              exit 0
+            fi
+            echo "❌ Falló. Esperando 10s..."
+            sleep 10
+            rm -rf llama.cpp
+          done
+          echo "❌ Todos los intentos fallaron"
+          exit 1
 
       - name: Build llama-server for arm64-v8a
         run: |
