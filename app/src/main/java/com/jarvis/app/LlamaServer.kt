@@ -58,15 +58,17 @@ class LlamaServer(private val context: Context) {
     }
 
     fun stop() {
-        process?.let {
-            it.destroy()
-            try {
-                if (!it.waitFor(3, TimeUnit.SECONDS)) it.destroyForcibly()
-            } catch (e: Exception) {
-                it.destroyForcibly()
-            }
-        }
+        val p = process
         process = null
+        if (p == null) return
+        p.destroy()
+        try {
+            if (!p.waitFor(3, TimeUnit.SECONDS)) {
+                p.destroyForcibly()
+            }
+        } catch (e: Exception) {
+            p.destroyForcibly()
+        }
     }
 
     companion object {
