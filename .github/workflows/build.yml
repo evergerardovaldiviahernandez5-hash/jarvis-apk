@@ -23,16 +23,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android components
+      - name: Install NDK and platform
         run: |
-          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;27.0.12077973"
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.0.12077973"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
 
       - name: Verify NDK
         run: |
-          echo "NDK path: $ANDROID_NDK_HOME"
-          ls -la $ANDROID_NDK_HOME | head -5
+          echo "NDK: $ANDROID_NDK_HOME"
+          ls -la $ANDROID_NDK_HOME | head -3
 
       - name: Cache llama.cpp
         uses: actions/cache@v4
@@ -42,8 +43,7 @@ jobs:
 
       - name: Clone llama.cpp
         if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
+        run: git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
 
       - name: Build llama-server for Android arm64
         run: |
