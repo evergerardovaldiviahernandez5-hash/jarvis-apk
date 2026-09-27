@@ -1,7 +1,6 @@
 package com.jarvis.app
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,7 +21,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -34,13 +32,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import java.io.File
 
-/* =====================================================
-   ROOT APP
-   ===================================================== */
 @Composable
 fun NovaApp(
     state: UiState,
@@ -52,15 +45,17 @@ fun NovaApp(
     onStartServer: (String) -> Unit,
     onStopServer: () -> Unit,
     onScanModels: () -> Unit,
+    onSelectModel: (File) -> Unit,
+    onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val palette = NovaTheme.palette
     var sidebarOpen by remember { mutableStateOf(false) }
+    var showModelPicker by remember { mutableStateOf(false) }
 
     Box(modifier.fillMaxSize().background(palette.bg)) {
         Row(Modifier.fillMaxSize()) {
-            // Sidebar (drawer en móvil)
             if (sidebarOpen || isWideScreen()) {
                 Sidebar(
                     state = state,
@@ -79,17 +74,27 @@ fun NovaApp(
                 onStartServer = onStartServer,
                 onStopServer = onStopServer,
                 onScanModels = onScanModels,
+                onSelectModel = onSelectModel,
+                onRequestPermission = onRequestPermission,
                 onOpenSettings = onOpenSettings,
+                onOpenModelPicker = { showModelPicker = true },
                 modifier = Modifier.weight(1f)
             )
         }
 
-        // Scrim para móvil
+        if (showModelPicker) {
+            ModelPickerModal(
+                state = state,
+                onSelect = { file -> onSelectModel(file); showModelPicker = false },
+                onScan = { onScanModels() },
+                onStop = { onStopServer(); showModelPicker = false },
+                onDismiss = { showModelPicker = false }
+            )
+        }
+
         AnimatedVisibility(visible = sidebarOpen && !isWideScreen()) {
             Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.4f))
+                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f))
                     .clickable { sidebarOpen = false }
             )
         }
@@ -115,37 +120,24 @@ fun Sidebar(
     modifier: Modifier = Modifier
 ) {
     val p = NovaTheme.palette
-    Column(
-        modifier
-            .background(p.sidebar)
-            .border(1.dp, p.borderSoft)
-    ) {
-        // Head
+    Column(modifier.background(p.sidebar).border(1.dp, p.borderSoft)) {
         Row(
             Modifier.fillMaxWidth().padding(16.dp, 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
-                Modifier.size(28.dp).clip(RoundedCornerShape(9.dp))
-                    .background(p.accent),
+                Modifier.size(28.dp).clip(RoundedCornerShape(9.dp)).background(p.accent),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Filled.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(16.dp))
             }
             Spacer(Modifier.width(10.dp))
-            Text(
-                "Nova",
-                color = p.text,
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 17.sp
-            )
+            Text("Nova", color = p.text, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
         }
 
-        // New chat
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp)
-                .clip(RoundedCornerShape(11.dp))
-                .background(p.bgElev)
+                .clip(RoundedCornerShape(11.dp)).background(p.bgElev)
                 .border(1.dp, p.border, RoundedCornerShape(11.dp))
                 .clickable { onNewChat() }
                 .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -158,22 +150,17 @@ fun Sidebar(
 
         Spacer(Modifier.height(8.dp))
         Text(
-            "RECIENTES",
-            color = p.muted,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 1.sp,
+            "RECIENTES", color = p.muted, fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 6.dp)
         )
 
-        // Lista
         LazyColumn(Modifier.weight(1f).padding(horizontal = 8.dp)) {
             if (state.chats.isEmpty()) {
                 item {
                     Text(
                         "Aún no hay conversaciones.\nEmpieza escribiendo abajo.",
-                        color = p.muted,
-                        fontSize = 13.sp,
+                        color = p.muted, fontSize = 13.sp,
                         modifier = Modifier.padding(20.dp, 16.dp)
                     )
                 }
@@ -190,7 +177,6 @@ fun Sidebar(
 
         Divider(color = p.borderSoft)
 
-        // Settings
         Row(
             Modifier.fillMaxWidth().clickable { onOpenSettings() }
                 .padding(horizontal = 14.dp, vertical = 14.dp),
@@ -208,8 +194,7 @@ fun Sidebar(
                 Text(
                     if (ready) "Listo" else "Sin modelo",
                     color = if (ready) p.accent else p.muted,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontSize = 10.sp, fontWeight = FontWeight.SemiBold
                 )
             }
         }
@@ -218,23 +203,13 @@ fun Sidebar(
 
 @Composable
 private fun ChatItem(
-    chat: Chat,
-    active: Boolean,
-    onClick: () -> Unit,
-    onDelete: () -> Unit
+    chat: Chat, active: Boolean,
+    onClick: () -> Unit, onDelete: () -> Unit
 ) {
     val p = NovaTheme.palette
-    var hovered by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(
-                when {
-                    active -> p.bgElev
-                    hovered -> p.sidebarHover
-                    else -> Color.Transparent
-                }
-            )
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+            .background(if (active) p.bgElev else Color.Transparent)
             .clickable { onClick() }
             .padding(horizontal = 10.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -244,13 +219,11 @@ private fun ChatItem(
             color = if (active) p.text else p.textSoft,
             fontSize = 13.5.sp,
             fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
         Box(
-            Modifier.size(24.dp).clip(RoundedCornerShape(6.dp))
-                .clickable { onDelete() },
+            Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)).clickable { onDelete() },
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Filled.Close, null, tint = p.muted, modifier = Modifier.size(14.dp))
@@ -259,7 +232,7 @@ private fun ChatItem(
 }
 
 /* =====================================================
-   MAIN CONTENT
+   MAIN
    ===================================================== */
 @Composable
 fun MainContent(
@@ -270,12 +243,14 @@ fun MainContent(
     onStartServer: (String) -> Unit,
     onStopServer: () -> Unit,
     onScanModels: () -> Unit,
+    onSelectModel: (File) -> Unit,
+    onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenModelPicker: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val p = NovaTheme.palette
     Column(modifier.fillMaxHeight().background(p.bg)) {
-        // Topbar
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -284,45 +259,38 @@ fun MainContent(
                 IconButton(onClick = onMenuClick) {
                     Icon(Icons.Filled.Menu, null, tint = p.textSoft)
                 }
-            } else {
-                Spacer(Modifier.width(4.dp))
-            }
+            } else { Spacer(Modifier.width(4.dp)) }
             Text(
                 state.chats.find { it.id == state.currentChatId }?.title ?: "Nueva conversación",
-                color = p.textSoft,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                color = p.textSoft, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
             )
-            ModelChip(state, onOpenSettings)
+            ModelChip(state, onOpenModelPicker)
         }
 
-        // Server status banner
-        AnimatedVisibility(visible = !state.serverReady && !state.serverStarting) {
-            ServerBanner(state, onStartServer, onScanModels, onOpenSettings)
+        // Banners
+        AnimatedVisibility(visible = !state.hasStoragePermission) {
+            PermissionBanner(onRequestPermission)
+        }
+        AnimatedVisibility(visible = state.hasStoragePermission && !state.serverReady && !state.serverStarting) {
+            ServerBanner(state, onStartServer, onScanModels, onOpenModelPicker)
         }
         AnimatedVisibility(visible = state.serverStarting) {
             StartingBanner(state)
         }
-        AnimatedVisibility(visible = state.serverError != null && !state.serverStarting) {
+        AnimatedVisibility(visible = state.serverError != null && !state.serverStarting && state.hasStoragePermission) {
             ErrorBanner(state.serverError ?: "", onOpenSettings)
         }
 
-        // Messages
         Box(Modifier.weight(1f)) {
             if (state.chats.find { it.id == state.currentChatId }?.messages.isNullOrEmpty() && !state.streaming) {
-                WelcomeScreen(
-                    onPick = onSend,
-                    modifier = Modifier.fillMaxSize()
-                )
+                WelcomeScreen(onPick = onSend, modifier = Modifier.fillMaxSize())
             } else {
                 MessagesList(state)
             }
         }
 
-        // Composer
         Composer(
             streaming = state.streaming,
             enabled = state.serverReady,
@@ -332,15 +300,11 @@ fun MainContent(
     }
 }
 
-/* =====================================================
-   TOPBAR: model chip
-   ===================================================== */
 @Composable
 private fun ModelChip(state: UiState, onClick: () -> Unit) {
     val p = NovaTheme.palette
     Row(
-        Modifier.clip(RoundedCornerShape(20.dp))
-            .background(p.bgElev)
+        Modifier.clip(RoundedCornerShape(20.dp)).background(p.bgElev)
             .border(1.dp, p.border, RoundedCornerShape(20.dp))
             .clickable { onClick() }
             .padding(horizontal = 11.dp, vertical = 6.dp),
@@ -352,75 +316,111 @@ private fun ModelChip(state: UiState, onClick: () -> Unit) {
         )
         Spacer(Modifier.width(6.dp))
         Text(
-            state.currentModel?.take(22) ?: "Configurar modelo",
+            state.currentModel?.take(22) ?: "Elegir modelo",
             color = p.muted, fontSize = 12.5.sp
         )
+        Spacer(Modifier.width(4.dp))
+        Icon(Icons.Filled.ArrowDropDown, null, tint = p.muted, modifier = Modifier.size(16.dp))
     }
 }
 
 /* =====================================================
-   BANNERS
+   PERMISSION BANNER
+   ===================================================== */
+@Composable
+private fun PermissionBanner(onRequest: () -> Unit) {
+    val p = NovaTheme.palette
+    Column(
+        Modifier.fillMaxWidth().padding(12.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(p.accent.copy(alpha = 0.10f))
+            .border(1.dp, p.accent.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+            .padding(14.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.Lock, null, tint = p.accent, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "Permiso de archivos necesario",
+                color = p.accent, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "Nova necesita leer tus modelos .gguf. Toca el botón y activa \"Permitir acceso a todos los archivos\".",
+            color = p.textSoft, fontSize = 12.sp
+        )
+        Spacer(Modifier.height(10.dp))
+        Button(
+            onClick = onRequest,
+            colors = ButtonDefaults.buttonColors(containerColor = p.accent),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Text("Dar permiso", fontSize = 13.sp)
+        }
+    }
+}
+
+/* =====================================================
+   SERVER BANNER
    ===================================================== */
 @Composable
 private fun ServerBanner(
     state: UiState,
     onStart: (String) -> Unit,
     onScan: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenPicker: () -> Unit
 ) {
     val p = NovaTheme.palette
-    var expanded by remember { mutableStateOf(false) }
     Column(
         Modifier.fillMaxWidth().padding(12.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(p.accent.copy(alpha = 0.08f))
-            .border(1.dp, p.accent.copy(alpha = 0.3f), RoundedCornerShape(14.dp))
+            .background(p.bgElev)
+            .border(1.dp, p.border, RoundedCornerShape(14.dp))
             .padding(14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Info, null, tint = p.accent, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text(
-                if (state.availableModels.isEmpty()) "No hay modelos .gguf"
-                else "Elige un modelo para empezar",
-                color = p.accent, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold,
+                if (state.modelsLoading) "Buscando modelos…"
+                else if (state.availableModels.isEmpty()) "No hay modelos .gguf"
+                else "${state.availableModels.size} modelo(s) encontrado(s)",
+                color = p.text, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f)
             )
-            TextButton(onClick = { onScan() }) {
-                Text("Buscar", color = p.accent, fontSize = 12.sp)
+            if (state.modelsLoading) {
+                CircularProgressIndicator(Modifier.size(16.dp), color = p.accent, strokeWidth = 2.dp)
             }
         }
-        if (state.availableModels.isEmpty()) {
-            Text(
-                "Copia tus .gguf a /sdcard/Download/ y pulsa Buscar.",
-                color = p.muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)
-            )
-        } else {
-            Spacer(Modifier.height(8.dp))
-            state.availableModels.take(if (expanded) 20 else 4).forEach { f ->
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
-                        .clickable { onStart(f.absolutePath) }
-                        .padding(vertical = 8.dp, horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onScan,
+                colors = ButtonDefaults.buttonColors(containerColor = p.border),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(Icons.Filled.Refresh, null, tint = p.text, modifier = Modifier.size(14.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Buscar", color = p.text, fontSize = 12.sp)
+            }
+            if (state.availableModels.isNotEmpty()) {
+                Button(
+                    onClick = onOpenPicker,
+                    colors = ButtonDefaults.buttonColors(containerColor = p.accent),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
-                    Icon(Icons.Filled.Description, null, tint = p.muted, modifier = Modifier.size(15.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "${f.name} (${"%.1f".format(f.length() / 1_000_000f)} MB)",
-                        color = p.textSoft, fontSize = 12.5.sp, maxLines = 1,
-                        overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f)
-                    )
+                    Text("Elegir modelo", fontSize = 12.sp)
                 }
             }
-            if (state.availableModels.size > 4) {
-                TextButton(onClick = { expanded = !expanded }) {
-                    Text(
-                        if (expanded) "Ver menos" else "Ver todos (${state.availableModels.size})",
-                        color = p.accent, fontSize = 12.sp
-                    )
-                }
-            }
+        }
+        if (state.availableModels.isEmpty() && !state.modelsLoading) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Copia tus .gguf a /sdcard/Download/ o cualquier carpeta y pulsa Buscar.",
+                color = p.muted, fontSize = 11.5.sp
+            )
         }
     }
 }
@@ -430,20 +430,20 @@ private fun StartingBanner(state: UiState) {
     val p = NovaTheme.palette
     Row(
         Modifier.fillMaxWidth().padding(12.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(p.bgElev)
+            .clip(RoundedCornerShape(14.dp)).background(p.bgElev)
             .border(1.dp, p.border, RoundedCornerShape(14.dp))
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(18.dp),
-            color = p.accent, strokeWidth = 2.dp
-        )
+        CircularProgressIndicator(Modifier.size(18.dp), color = p.accent, strokeWidth = 2.dp)
         Spacer(Modifier.width(12.dp))
         Column {
             Text("Cargando modelo…", color = p.text, fontSize = 13.5.sp, fontWeight = FontWeight.Medium)
-            Text("Puede tardar 30-90 segundos", color = p.muted, fontSize = 11.5.sp)
+            Text(
+                state.currentModel ?: "Iniciando servidor",
+                color = p.muted, fontSize = 11.5.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -461,7 +461,7 @@ private fun ErrorBanner(msg: String, onOpenSettings: () -> Unit) {
     ) {
         Icon(Icons.Filled.Warning, null, tint = p.accent, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
-        Text(msg, color = p.accent, fontSize = 12.5.sp, modifier = Modifier.weight(1f))
+        Text(msg, color = p.accent, fontSize = 12.sp, modifier = Modifier.weight(1f))
         TextButton(onClick = onOpenSettings) {
             Text("Ver", color = p.accent, fontSize = 12.sp)
         }
@@ -469,7 +469,114 @@ private fun ErrorBanner(msg: String, onOpenSettings: () -> Unit) {
 }
 
 /* =====================================================
-   WELCOME
+   MODEL PICKER
+   ===================================================== */
+@Composable
+private fun ModelPickerModal(
+    state: UiState,
+    onSelect: (File) -> Unit,
+    onScan: () -> Unit,
+    onStop: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val p = NovaTheme.palette
+    Box(
+        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f))
+            .clickable { onDismiss() },
+        contentAlignment = Alignment.BottomCenter
+    ) {
+        Column(
+            Modifier.fillMaxWidth().fillMaxHeight(0.75f)
+                .clip(RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp))
+                .background(p.bgElev)
+                .clickable(enabled = false) {}
+                .padding(16.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Modelos disponibles",
+                    color = p.text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onScan) {
+                    Icon(Icons.Filled.Refresh, null, tint = p.muted)
+                }
+                if (state.serverReady) {
+                    TextButton(onClick = onStop) {
+                        Text("Detener", color = p.accent, fontSize = 13.sp)
+                    }
+                }
+            }
+            Divider(color = p.borderSoft)
+            Spacer(Modifier.height(8.dp))
+
+            if (state.modelsLoading) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = p.accent)
+                }
+            } else if (state.availableModels.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Filled.FolderOff, null, tint = p.muted, modifier = Modifier.size(48.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Text("No se encontraron modelos .gguf", color = p.muted, fontSize = 14.sp)
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            "Copia tus archivos a /sdcard/Download/",
+                            color = p.muted, fontSize = 12.sp
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Button(
+                            onClick = onScan,
+                            colors = ButtonDefaults.buttonColors(containerColor = p.accent)
+                        ) { Text("Buscar de nuevo") }
+                    }
+                }
+            } else {
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(state.availableModels, key = { it.absolutePath }) { file ->
+                        val isCurrent = state.currentModelPath == file.absolutePath
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isCurrent) p.accent.copy(alpha = 0.10f) else Color.Transparent)
+                                .clickable { onSelect(file) }
+                                .padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Description,
+                                null,
+                                tint = if (isCurrent) p.accent else p.muted,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    file.name,
+                                    color = p.text, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "${"%.0f".format(file.length() / 1_000_000f)} MB · ${file.parentFile?.absolutePath?.replace("/storage/emulated/0/", "") ?: ""}",
+                                    color = p.muted, fontSize = 11.sp,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            if (isCurrent) {
+                                Icon(Icons.Filled.CheckCircle, null, tint = p.accent, modifier = Modifier.size(20.dp))
+                            }
+                        }
+                        Divider(color = p.borderSoft, thickness = 0.5.dp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* =====================================================
+   WELCOME / MESSAGES / COMPOSER (idénticos a antes)
    ===================================================== */
 @Composable
 private fun WelcomeScreen(onPick: (String) -> Unit, modifier: Modifier = Modifier) {
@@ -492,10 +599,7 @@ private fun WelcomeScreen(onPick: (String) -> Unit, modifier: Modifier = Modifie
             Icon(Icons.Filled.AutoAwesome, null, tint = Color.White, modifier = Modifier.size(30.dp))
         }
         Spacer(Modifier.height(20.dp))
-        Text(
-            "¿En qué puedo ayudarte?",
-            color = p.text, fontSize = 26.sp, fontWeight = FontWeight.Medium
-        )
+        Text("¿En qué puedo ayudarte?", color = p.text, fontSize = 26.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(8.dp))
         Text(
             "Escribe lo que necesites: código, análisis, redacción o cualquier pregunta.",
@@ -525,9 +629,6 @@ private fun WelcomeScreen(onPick: (String) -> Unit, modifier: Modifier = Modifie
     }
 }
 
-/* =====================================================
-   MESSAGES LIST
-   ===================================================== */
 @Composable
 private fun MessagesList(state: UiState) {
     val listState = rememberLazyListState()
@@ -536,9 +637,7 @@ private fun MessagesList(state: UiState) {
 
     LaunchedEffect(chat?.messages?.size, state.streamingText) {
         val total = (chat?.messages?.size ?: 0) + if (state.streaming) 1 else 0
-        if (total > 0) {
-            scope.launch { listState.animateScrollToItem(total - 1) }
-        }
+        if (total > 0) scope.launch { listState.animateScrollToItem(total - 1) }
     }
 
     LazyColumn(
@@ -548,16 +647,14 @@ private fun MessagesList(state: UiState) {
     ) {
         chat?.messages?.forEach { msg ->
             item(key = "${chat.id}-${msg.role}-${msg.content.hashCode()}") {
-                when (msg.role) {
-                    "user" -> UserMessage(msg.content)
-                    else -> AiMessage(msg.content, streaming = false)
-                }
+                if (msg.role == "user") UserMessage(msg.content)
+                else AiMessage(msg.content, false)
                 Spacer(Modifier.height(12.dp))
             }
         }
         if (state.streaming) {
             item(key = "streaming") {
-                AiMessage(state.streamingText.ifEmpty { "…" }, streaming = true)
+                AiMessage(state.streamingText.ifEmpty { "…" }, true)
                 Spacer(Modifier.height(12.dp))
             }
         }
@@ -596,8 +693,15 @@ private fun AiMessage(text: String, streaming: Boolean) {
             if (!streaming && text.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
                 Row {
-                    SmallAction("Copiar", Icons.Outlined.ContentCopy) {
-                        clipboard.setText(AnnotatedString(text))
+                    Row(
+                        Modifier.clip(RoundedCornerShape(7.dp))
+                            .clickable { clipboard.setText(AnnotatedString(text)) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.ContentCopy, null, tint = p.muted, modifier = Modifier.size(13.dp))
+                        Spacer(Modifier.width(5.dp))
+                        Text("Copiar", color = p.muted, fontSize = 11.5.sp)
                     }
                 }
             }
@@ -605,24 +709,6 @@ private fun AiMessage(text: String, streaming: Boolean) {
     }
 }
 
-@Composable
-private fun SmallAction(label: String, icon: ImageVector, onClick: () -> Unit) {
-    val p = NovaTheme.palette
-    Row(
-        Modifier.clip(RoundedCornerShape(7.dp))
-            .clickable { onClick() }
-            .padding(horizontal = 8.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, null, tint = p.muted, modifier = Modifier.size(13.dp))
-        Spacer(Modifier.width(5.dp))
-        Text(label, color = p.muted, fontSize = 11.5.sp)
-    }
-}
-
-/* =====================================================
-   MARKDOWN
-   ===================================================== */
 @Composable
 fun MarkdownText(text: String) {
     val p = NovaTheme.palette
@@ -633,8 +719,7 @@ fun MarkdownText(text: String) {
                 is MdBlock.Header -> {
                     Spacer(Modifier.height(if (block.level <= 2) 10.dp else 6.dp))
                     Text(
-                        block.text,
-                        color = p.text,
+                        block.text, color = p.text,
                         fontSize = when (block.level) {
                             1 -> 22.sp; 2 -> 19.sp; 3 -> 17.sp; else -> 15.sp
                         },
@@ -645,9 +730,7 @@ fun MarkdownText(text: String) {
                 is MdBlock.Para -> {
                     Text(
                         inlineFormat(block.text, p.codeBg, p.accent),
-                        color = p.textSoft,
-                        fontSize = 15.5.sp,
-                        lineHeight = 25.sp
+                        color = p.textSoft, fontSize = 15.5.sp, lineHeight = 25.sp
                     )
                     Spacer(Modifier.height(8.dp))
                 }
@@ -706,19 +789,13 @@ fun CodeBlock(lang: String, code: String) {
             }
         }
         Text(
-            code,
-            color = p.textSoft,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 13.sp,
-            lineHeight = 20.sp,
+            code, color = p.textSoft, fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp, lineHeight = 20.sp,
             modifier = Modifier.horizontalScroll(rememberScrollState()).padding(14.dp)
         )
     }
 }
 
-/* =====================================================
-   COMPOSER
-   ===================================================== */
 @Composable
 private fun Composer(
     streaming: Boolean,
@@ -734,7 +811,7 @@ private fun Composer(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
                 .background(p.bgElev)
                 .border(1.dp, p.border, RoundedCornerShape(20.dp))
-                .padding(6.dp, 6.dp, 6.dp, 6.dp),
+                .padding(6.dp),
             verticalAlignment = Alignment.Bottom
         ) {
             BasicTextField(

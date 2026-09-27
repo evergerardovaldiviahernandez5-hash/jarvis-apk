@@ -17,13 +17,15 @@ data class UiState(
     val serverStarting: Boolean = false,
     val serverError: String? = null,
     val currentModel: String? = null,
+    val currentModelPath: String? = null,
     val chats: List<Chat> = emptyList(),
     val currentChatId: String? = null,
     val streaming: Boolean = false,
     val streamingText: String = "",
     val availableModels: List<File> = emptyList(),
     val settings: AppSettings = AppSettings(),
-    val modelsLoading: Boolean = false
+    val modelsLoading: Boolean = false,
+    val hasStoragePermission: Boolean = false
 )
 
 class JarvisViewModel(app: Application) : AndroidViewModel(app) {
@@ -38,34 +40,88 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
         val ctx = app.applicationContext
         _state.value = _state.value.copy(
             chats = ChatRepository.load(ctx),
-            settings = SettingsRepository.load(ctx)
+            settings = SettingsRepository.load(ctx),
+            hasStoragePermission = StoragePermission.hasPermission(ctx)
         )
-        scanModels()
+        if (_state.value.hasStoragePermission) scanModels()
+    }
+
+    fun refreshPermission() {
+        val ctx = getApplication<Application>()
+        val has = StoragePermission.hasPermission(ctx)
+        _state.value = _state.value.copy(hasStoragePermission = has)
+        if (has && _state.value.availableModels.isEmpty()) scanModels()
     }
 
     fun scanModels() {
-        _state.value = _state.value.copy(modelsLoading = true)
-        viewModelScope.launch(Dispatchers.IO) {
-            val dirs = listOf(
-                File("/sdcard/Download"),
-                File("/sdcard/Documents"),
-                File("/sdcard/Android/data/com.jarvis.app/files"),
-                getApplication<Application>().filesDir
+        if (!_state.value.hasStoragePermission) {
+            _state.value = _state.value.copy(
+                serverError = "Necesitas dar permiso de acceso a archivos",
+                modelsLoading = false
             )
-            val found = dirs.flatMap { d ->
-                d.listFiles { f -> f.isFile && f.name.endsWith(".gguf", ignoreCase = true) }?.toList() ?: emptyList()
-            }.distinctBy { it.absolutePath }
-            _state.value = _state.value.copy(availableModels = found, modelsLoading = false)
+            return
+        }
+        _state.value = _state.value.copy(modelsLoading = true, serverError = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            val roots = listOf(
+                File("/sdcard"),
+                File("/storage/emulated/0"),
+                File("/storage/self/primary"),
+                getApplication<Application>().filesDir
+            ).filter { it.exists() }
+
+            val found = mutableListOf<File>()
+            val seen = mutableSetOf<String>()
+            val skipDirs = setOf("Android", ".thumbnails", ".cache", ".trash")
+
+            for (root in roots) {
+                scanRecursive(root, found, seen, skipDirs, maxDepth = 6)
+            }
+
+            val list = found
+                .distinctBy { it.absolutePath }
+                .sortedByDescending { it.length() }
+
+            _state.value = _state.value.copy(
+                availableModels = list,
+                modelsLoading = false,
+                serverError = if (list.isEmpty()) "No se encontraron modelos .gguf en el dispositivo" else null
+            )
+        }
+    }
+
+    private fun scanRecursive(
+        dir: File,
+        out: MutableList<File>,
+        seen: MutableSet<String>,
+        skip: Set<String>,
+        maxDepth: Int,
+        depth: Int = 0
+    ) {
+        if (depth > maxDepth) return
+        val files = try { dir.listFiles() ?: return } catch (_: Exception) { return }
+        for (f in files) {
+            if (f.isDirectory) {
+                if (f.name in skip || f.name.startsWith(".")) continue
+                if (!f.canRead()) continue
+                scanRecursive(f, out, seen, skip, maxDepth, depth + 1)
+            } else if (f.isFile && f.name.lowercase().endsWith(".gguf")) {
+                if (seen.add(f.absolutePath)) out.add(f)
+            }
         }
     }
 
     fun startServer(modelPath: String) {
         val file = File(modelPath)
         if (!file.exists()) {
-            _state.value = _state.value.copy(serverError = "Archivo no encontrado")
+            _state.value = _state.value.copy(serverError = "Archivo no encontrado: $modelPath")
             return
         }
-        _state.value = _state.value.copy(serverStarting = true, serverError = null)
+        _state.value = _state.value.copy(
+            serverStarting = true,
+            serverError = null,
+            currentModelPath = modelPath
+        )
         viewModelScope.launch {
             val s = _state.value.settings
             val ok = withContext(Dispatchers.IO) {
@@ -81,13 +137,19 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun stopServer() {
+    fun selectModel(file: File) {
+        // Cambiar de modelo: parar el actual y arrancar el nuevo
         server.stop()
         _state.value = _state.value.copy(serverReady = false, currentModel = null)
+        startServer(file.absolutePath)
+    }
+
+    fun stopServer() {
+        server.stop()
+        _state.value = _state.value.copy(serverReady = false, currentModel = null, currentModelPath = null)
     }
 
     fun newChat() { _state.value = _state.value.copy(currentChatId = null) }
-
     fun openChat(id: String) { _state.value = _state.value.copy(currentChatId = id) }
 
     fun deleteChat(id: String) {
