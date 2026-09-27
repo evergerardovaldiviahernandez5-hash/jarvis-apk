@@ -10,19 +10,36 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.runtime.*
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 
 class MainActivity : ComponentActivity() {
@@ -73,11 +90,9 @@ private fun SettingsWebView(
     onPickModel: () -> Unit
 ) {
     val p = NovaTheme.palette
-    val context = androidx.compose.ui.platform.LocalContext.current
 
     Box(Modifier.fillMaxSize().background(p.bg)) {
         if (!serverReady) {
-            // Si no hay servidor, no podemos cargar la WebUI de llama.cpp
             Column(
                 Modifier.fillMaxSize().padding(24.dp),
                 verticalArrangement = Arrangement.Center,
@@ -85,20 +100,22 @@ private fun SettingsWebView(
             ) {
                 Text(
                     "Primero carga un modelo",
-                    color = p.text, fontSize = 18.spFallback(), fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                    color = p.text,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "La configuración avanzada la sirve llama.cpp.\nNecesitas un modelo cargado para acceder.",
                     color = p.muted,
-                    fontSize = 14.spFallback(),
+                    fontSize = 14.sp,
                     modifier = Modifier.padding(horizontal = 20.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
                 Spacer(Modifier.height(20.dp))
-                androidx.compose.material3.Button(
+                Button(
                     onClick = { onPickModel(); onClose() },
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = p.accent)
+                    colors = ButtonDefaults.buttonColors(containerColor = p.accent)
                 ) {
                     Text("Buscar modelos")
                 }
@@ -123,28 +140,21 @@ private fun SettingsWebView(
             )
         }
 
-        // Botón flotante de cerrar
         Box(
-            Modifier.align(Alignment.TopEnd).padding(16.dp)
-                .size(44.dp).clip(CircleShape).background(p.bgElev)
-                .clickableNoRipple(onClose),
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp)
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(p.bgElev)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onClose
+                ),
             contentAlignment = Alignment.Center
         ) {
             Icon(Icons.Filled.Close, null, tint = p.text)
         }
     }
 }
-
-// Helpers para no importar más cosas
-private fun Int.spFallback() = androidx.compose.ui.unit.TextUnit(
-    this.toFloat(), androidx.compose.ui.unit.TextUnitType.Sp
-)
-
-private fun Modifier.clickableNoRipple(onClick: () -> Unit): Modifier =
-    this.then(
-        androidx.compose.foundation.clickable(
-            interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
-            indication = null,
-            onClick = onClick
-        )
-    )
