@@ -1,4 +1,4 @@
-name: Build Jarvis APK
+name: Build Nova APK
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - uses: actions/checkout@v4
@@ -25,7 +25,6 @@ jobs:
           if [ ! -x "$SDKMGR" ]; then
             SDKMGR=$(find $SDK_ROOT -name sdkmanager -type f | head -1)
           fi
-          echo "Usando: $SDKMGR"
           yes | $SDKMGR --licenses > /dev/null 2>&1 || true
           $SDKMGR "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;27.0.12077973"
           echo "ANDROID_HOME=$SDK_ROOT" >> $GITHUB_ENV
@@ -33,46 +32,70 @@ jobs:
           echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
           echo "ANDROID_NDK_ROOT=$SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
 
-      - name: Verify
-        run: |
-          echo "SDK: $ANDROID_SDK_ROOT"
-          echo "NDK: $ANDROID_NDK_HOME"
-          ls $ANDROID_SDK_ROOT/ndk/ || echo "sin NDK"
-          ls $ANDROID_SDK_ROOT/platforms/ || echo "sin platforms"
-
       - name: Download Gradle 8.7
         run: |
           wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
           unzip -q gradle-8.7-bin.zip
           echo "$PWD/gradle-8.7/bin" >> $GITHUB_PATH
 
+      - name: Cache llama.cpp
+        uses: actions/cache@v4
+        with:
+          path: llama.cpp
+          key: llama-v2-${{ runner.os }}
+
       - name: Clone llama.cpp
+        if: steps.cache.outputs.cache-hit != 'true'
         run: git clone --depth 1 https://github.com/ggml-org/llama.cpp.git
 
-      - name: Build llama-server
+      - name: Build llama-server for arm64-v8a
         run: |
           cd llama.cpp
-          cmake -B build-android \
+          cmake -B build-arm64 \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-28 \
+            -DANDROID_PLATFORM=android-24 \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_OPENMP=OFF \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-android -j$(nproc) --target llama-server
+          cmake --build build-arm64 -j$(nproc) --target llama-server
 
-      - name: Copy binary
+      - name: Build llama-server for armeabi-v7a
         run: |
-          mkdir -p app/src/main/jniLibs/arm64-v8a
-          cp llama.cpp/build-android/bin/llama-server app/src/main/jniLibs/arm64-v8a/libllama_server.so
+          cd llama.cpp
+          cmake -B build-armv7 \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=armeabi-v7a \
+            -DANDROID_PLATFORM=android-24 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_OPENMP=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-armv7 -j$(nproc) --target llama-server
+
+      - name: Copy binaries to jniLibs
+        run: |
+          mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a
+          cp llama.cpp/build-arm64/bin/llama-server app/src/main/jniLibs/arm64-v8a/libllama_server.so
+          cp llama.cpp/build-armv7/bin/llama-server app/src/main/jniLibs/armeabi-v7a/libllama_server.so
+          echo "=== arm64-v8a ==="
           ls -la app/src/main/jniLibs/arm64-v8a/
+          echo "=== armeabi-v7a ==="
+          ls -la app/src/main/jniLibs/armeabi-v7a/
 
       - name: Build APK
         run: gradle assembleDebug --no-daemon --stacktrace
 
+      - name: Show APK info
+        run: |
+          ls -la app/build/outputs/apk/debug/
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          echo "Tamaño: $(du -h $APK | cut -f1)"
+          SDK_ROOT=/usr/local/lib/android/sdk
+          $SDK_ROOT/build-tools/34.0.0/aapt dump badging $APK | grep -E "package:|sdkVersion|targetSdk|native-code"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-APK
+          name: Nova-APK
           path: app/build/outputs/apk/debug/*.apk
           retention-days: 30
