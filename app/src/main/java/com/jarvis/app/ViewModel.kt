@@ -128,8 +128,12 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val s = _state.value.settings
             val ok = withContext(Dispatchers.IO) {
-                server.start(modelPath, s.contextSize, s.threads) &&
-                    LlamaServer.waitForPort(8081, 180_000)
+                if (!server.start(modelPath, s.contextSize, s.threads)) return@withContext false
+                // 1) Esperar a que el puerto abra
+                if (!LlamaServer.waitForPort(8081, 30_000)) return@withContext false
+                // 2) Esperar a que el modelo esté REALMENTE cargado (/health = 200)
+                //    Sin esto, el primer mensaje devuelve HTTP 503.
+                LlamaServer.waitForHealth(8081, 180_000)
             }
             _state.value = _state.value.copy(
                 serverReady = ok,

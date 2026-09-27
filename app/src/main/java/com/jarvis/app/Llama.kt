@@ -56,12 +56,42 @@ class LlamaServer(private val context: Context) {
 
     companion object {
         private const val TAG = "LlamaServer"
+
         fun waitForPort(port: Int, timeoutMs: Long): Boolean {
             val start = System.currentTimeMillis()
             while (System.currentTimeMillis() - start < timeoutMs) {
                 try { Socket("127.0.0.1", port).close(); return true }
                 catch (_: Exception) { Thread.sleep(300) }
             }
+            return false
+        }
+
+        /**
+         * Espera hasta que llama-server responda 200 en /health.
+         * El puerto se abre ANTES de que el modelo esté listo, por eso hay que
+         * esperar al /health real o las primeras peticiones darán HTTP 503.
+         */
+        fun waitForHealth(port: Int, timeoutMs: Long): Boolean {
+            val client = OkHttpClient.Builder()
+                .connectTimeout(2, TimeUnit.SECONDS)
+                .readTimeout(2, TimeUnit.SECONDS)
+                .build()
+            val start = System.currentTimeMillis()
+            while (System.currentTimeMillis() - start < timeoutMs) {
+                try {
+                    val req = Request.Builder()
+                        .url("http://127.0.0.1:$port/health")
+                        .build()
+                    client.newCall(req).execute().use { res ->
+                        if (res.isSuccessful) {
+                            Log.i(TAG, "Health OK después de ${System.currentTimeMillis() - start} ms")
+                            return true
+                        }
+                    }
+                } catch (_: Exception) { /* todavía no responde */ }
+                Thread.sleep(500)
+            }
+            Log.w(TAG, "Health timeout después de $timeoutMs ms")
             return false
         }
     }
@@ -107,11 +137,16 @@ class LlamaClient(private val baseUrl: String = "http://127.0.0.1:8081") {
                 if (data == "[DONE]") break
                 try {
                     val obj = JSONObject(data)
-                    val delta = obj.optJSONArray("choices")
-                        ?.optJSONObject(0)
-                        ?.optJSONObject("delta")
-                        ?.optString("content", "") ?: ""
-                    if (delta.isNotEmpty()) emit(delta)
+                    val choice = obj.optJSONArray("choices")?.optJSONObject(0) ?: continue
+                    val deltaObj = choice.optJSONObject("delta") ?: continue
+
+                    // FIX: si content es JSON null, optString devuelve "null" como string.
+                    // Hay que comprobarlo explícitamente para no emitir "null".
+                    if (deltaObj.isNull("content")) continue
+                    val delta = deltaObj.optString("content", "")
+                    if (delta.isEmpty()) continue
+                    if (delta == "null") continue
+                    emit(delta)
                 } catch (_: Exception) {}
             }
         }
