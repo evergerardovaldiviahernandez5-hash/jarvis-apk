@@ -2,7 +2,7 @@ name: Build Jarvis APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -20,13 +20,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK + NDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platforms;android-34
-            build-tools;34.0.0
-            ndk;27.0.12077973
+
+      - name: Install Android components
+        run: |
+          sdkmanager --install "platforms;android-34" "build-tools;34.0.0" "ndk;27.0.12077973"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
+
+      - name: Verify NDK
+        run: |
+          echo "NDK path: $ANDROID_NDK_HOME"
+          ls -la $ANDROID_NDK_HOME | head -5
 
       - name: Cache llama.cpp
         uses: actions/cache@v4
@@ -58,7 +64,6 @@ jobs:
           mkdir -p app/src/main/jniLibs/arm64-v8a
           cp llama.cpp/build-android/bin/llama-server \
              app/src/main/jniLibs/arm64-v8a/libllama_server.so
-          # Copiar .so adicionales si el build los generó
           find llama.cpp/build-android/bin -name "*.so" \
              -exec cp {} app/src/main/jniLibs/arm64-v8a/ \; 2>/dev/null || true
           ls -la app/src/main/jniLibs/arm64-v8a/
