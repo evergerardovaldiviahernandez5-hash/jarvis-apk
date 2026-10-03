@@ -108,14 +108,39 @@ jobs:
       - name: Copy binaries to jniLibs
         run: |
           mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/armeabi-v7a
+
+          # --- llama-server (obligatorio) ---
           cp llama.cpp/build-arm64/bin/llama-server app/src/main/jniLibs/arm64-v8a/libllama_server.so
-          cp llama.cpp/build-arm64/bin/rpc-server  app/src/main/jniLibs/arm64-v8a/librpc_server.so
           cp llama.cpp/build-armv7/bin/llama-server app/src/main/jniLibs/armeabi-v7a/libllama_server.so
-          cp llama.cpp/build-armv7/bin/rpc-server  app/src/main/jniLibs/armeabi-v7a/librpc_server.so
-          echo "=== arm64-v8a ==="
-          ls -la app/src/main/jniLibs/arm64-v8a/
-          echo "=== armeabi-v7a ==="
-          ls -la app/src/main/jniLibs/armeabi-v7a/
+          echo "✅ llama-server copiado"
+
+          # --- rpc-server arm64 (opcional) ---
+          RPC_ARM64=""
+          [ -f llama.cpp/build-arm64/bin/rpc-server ] && RPC_ARM64="llama.cpp/build-arm64/bin/rpc-server"
+          [ -z "$RPC_ARM64" ] && [ -f llama.cpp/build-arm64/bin/ggml-rpc-server ] && RPC_ARM64="llama.cpp/build-arm64/bin/ggml-rpc-server"
+          if [ -n "$RPC_ARM64" ]; then
+            cp "$RPC_ARM64" app/src/main/jniLibs/arm64-v8a/librpc_server.so
+            echo "✅ rpc-server arm64 copiado desde $RPC_ARM64"
+          else
+            echo "⚠️ rpc-server arm64 NO se compiló (se omite)"
+          fi
+
+          # --- rpc-server armv7 (opcional) ---
+          RPC_ARMV7=""
+          [ -f llama.cpp/build-armv7/bin/rpc-server ] && RPC_ARMV7="llama.cpp/build-armv7/bin/rpc-server"
+          [ -z "$RPC_ARMV7" ] && [ -f llama.cpp/build-armv7/bin/ggml-rpc-server ] && RPC_ARMV7="llama.cpp/build-armv7/bin/ggml-rpc-server"
+          if [ -n "$RPC_ARMV7" ]; then
+            cp "$RPC_ARMV7" app/src/main/jniLibs/armeabi-v7a/librpc_server.so
+            echo "✅ rpc-server armv7 copiado desde $RPC_ARMV7"
+          else
+            echo "⚠️ rpc-server armv7 NO se compiló (se omite)"
+          fi
+
+          echo ""
+          echo "=== Contenido jniLibs ==="
+          ls -la app/src/main/jniLibs/arm64-v8a/ || true
+          ls -la app/src/main/jniLibs/armeabi-v7a/ || true
+
 
       - name: Build APK
         run: gradle assembleDebug --no-daemon --stacktrace
