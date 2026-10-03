@@ -8,9 +8,13 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
 
 data class UiState(
     val serverReady: Boolean = false,
@@ -25,7 +29,12 @@ data class UiState(
     val availableModels: List<File> = emptyList(),
     val settings: AppSettings = AppSettings(),
     val modelsLoading: Boolean = false,
-    val hasStoragePermission: Boolean = false
+    val hasStoragePermission: Boolean = false,
+    val clusterMode: Boolean = false,
+    val workerMode: Boolean = false,
+    val discoveredWorkers: List<String> = emptyList(),
+    val localIp: String = "",
+    val scanning: Boolean = false
 )
 
 class JarvisViewModel(app: Application) : AndroidViewModel(app) {
@@ -241,4 +250,99 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
         super.onCleared()
         server.stop()
     }
+
+    // ============================================================
+    // MODO CLÚSTER
+    // ============================================================
+
+    fun discoverWorkers() {
+        _state.value = _state.value.copy(scanning = true, discoveredWorkers = emptyList())
+        viewModelScope.launch(Dispatchers.IO) {
+            val localIp = getLocalIpAddress()
+            val prefix = localIp.substringBeforeLast(".")
+            val found = mutableListOf<String>()
+            val jobs = (1..254).map { i ->
+                async {
+                    val ip = "$prefix.$i"
+                    try {
+                        java.net.Socket().use { s ->
+                            s.connect(InetSocketAddress(ip, 50052), 250)
+                            synchronized(found) { found.add("$ip:50052") }
+                        }
+                    } catch (_: Exception) {}
+                }
+            }
+            jobs.awaitAll()
+            _state.value = _state.value.copy(
+                discoveredWorkers = found.sorted(),
+                localIp = localIp,
+                scanning = false
+            )
+        }
+    }
+
+    fun startCluster(workerEndpoints: List<String>) {
+        val s = _state.value
+        val modelPath = s.currentModelPath ?: return
+        _state.value = _state.value.copy(
+            serverStarting = true,
+            serverError = null,
+            clusterMode = true
+        )
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                if (!server.startWithRpc(
+                        modelPath,
+                        workerEndpoints,
+                        s.settings.contextSize,
+                        s.settings.threads
+                    )
+                ) return@withContext false
+                if (!LlamaServer.waitForPort(8081, 30_000)) return@withContext false
+                LlamaServer.waitForHealth(8081, 180_000)
+            }
+            _state.value = _state.value.copy(
+                serverReady = ok,
+                serverStarting = false,
+                serverError = if (ok) null else "No se pudo iniciar el clúster",
+                clusterMode = ok
+            )
+        }
+    }
+
+    fun startAsWorker() {
+        _state.value = _state.value.copy(workerMode = true, serverError = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = server.startRpcWorker(50052)
+            if (!ok) {
+                _state.value = _state.value.copy(
+                    workerMode = false,
+                    serverError = "No se pudo iniciar como worker. ¿Falta librpc_server.so?"
+                )
+            } else {
+                val ip = getLocalIpAddress()
+                _state.value = _state.value.copy(localIp = ip)
+            }
+        }
+    }
+
+    fun stopWorker() {
+        server.stop()
+        _state.value = _state.value.copy(workerMode = false)
+    }
+
+    private fun getLocalIpAddress(): String {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            for (intf in interfaces) {
+                for (addr in intf.inetAddresses) {
+                    if (!addr.isLoopbackAddress && addr.hostAddress?.contains(".") == true) {
+                        return addr.hostAddress ?: ""
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return "192.168.1"
+    }
+
 }

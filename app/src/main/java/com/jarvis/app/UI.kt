@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,11 +51,17 @@ fun NovaApp(
     onSelectModel: (File) -> Unit,
     onRequestPermission: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenCluster: () -> Unit,
+    onDiscoverWorkers: () -> Unit,
+    onStartCluster: (List<String>) -> Unit,
+    onStartAsWorker: () -> Unit,
+    onStopWorker: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val palette = NovaTheme.palette
     var sidebarOpen by remember { mutableStateOf(false) }
     var showModelPicker by remember { mutableStateOf(false) }
+    var showClusterModal by remember { mutableStateOf(false) }
     val wide = isWideScreen()
 
     Box(modifier.fillMaxSize().background(palette.bg)) {
@@ -66,6 +73,7 @@ fun NovaApp(
                     onOpenChat = onOpenChat,
                     onDeleteChat = onDeleteChat,
                     onOpenSettings = onOpenSettings,
+                    onOpenCluster = onOpenCluster,
                     modifier = Modifier.width(272.dp).fillMaxHeight()
                 )
             }
@@ -102,7 +110,19 @@ fun NovaApp(
                 onOpenChat = { onOpenChat(it); sidebarOpen = false },
                 onDeleteChat = onDeleteChat,
                 onOpenSettings = { onOpenSettings(); sidebarOpen = false },
+                onOpenCluster = { onOpenCluster(); sidebarOpen = false },
                 modifier = Modifier.width(272.dp).fillMaxHeight()
+            )
+        }
+
+        if (showClusterModal) {
+            ClusterModal(
+                state = state,
+                onDiscover = { onDiscoverWorkers() },
+                onStartCluster = { endpoints -> onStartCluster(endpoints); showClusterModal = false },
+                onStartWorker = { onStartAsWorker() },
+                onStopWorker = { onStopWorker() },
+                onDismiss = { showClusterModal = false }
             )
         }
 
@@ -135,6 +155,11 @@ fun Sidebar(
     onOpenChat: (String) -> Unit,
     onDeleteChat: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenCluster: () -> Unit,
+    onDiscoverWorkers: () -> Unit,
+    onStartCluster: (List<String>) -> Unit,
+    onStartAsWorker: () -> Unit,
+    onStopWorker: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val p = NovaTheme.palette
@@ -202,6 +227,25 @@ fun Sidebar(
         }
 
         Divider(color = p.borderSoft)
+
+        Row(
+            Modifier.fillMaxWidth().clickable { onOpenCluster() }
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.DeviceHub, null, tint = p.muted, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Text("Modo Clúster", color = p.textSoft, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            if (state.clusterMode) {
+                Box(
+                    Modifier.clip(RoundedCornerShape(20.dp))
+                        .background(p.accent.copy(alpha = 0.12f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
+                    Text("ON", color = p.accent, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
 
         Row(
             Modifier.fillMaxWidth().clickable { onOpenSettings() }
@@ -872,6 +916,187 @@ private fun Composer(
                     null, tint = Color.White, modifier = Modifier.size(18.dp)
                 )
             }
+        }
+    }
+}
+
+/* =====================================================
+   CLUSTER MODAL
+   ===================================================== */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ClusterModal(
+    state: UiState,
+    onDiscover: () -> Unit,
+    onStartCluster: (List<String>) -> Unit,
+    onStartWorker: () -> Unit,
+    onStopWorker: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val p = NovaTheme.palette
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val selected = remember { mutableStateListOf<String>() }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = p.bgElev,
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(20.dp)) {
+            Text(
+                "Modo Clúster",
+                color = p.text,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Combina la potencia de varios teléfonos para ejecutar modelos más grandes o responder más rápido.",
+                color = p.muted,
+                fontSize = 13.sp
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            // === SECCIÓN WORKER ===
+            Text(
+                "Este dispositivo como worker",
+                color = p.text,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Spacer(Modifier.height(8.dp))
+            if (state.workerMode) {
+                Row(
+                    Modifier.fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(p.accent.copy(alpha = 0.1f))
+                        .padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Filled.CheckCircle, null, tint = p.accent, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Worker activo", color = p.accent, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                        Text("IP: ${state.localIp}:50052", color = p.muted, fontSize = 11.sp)
+                    }
+                    TextButton(onClick = onStopWorker) {
+                        Text("Detener", color = p.accent, fontSize = 12.sp)
+                    }
+                }
+            } else {
+                Button(
+                    onClick = onStartWorker,
+                    colors = ButtonDefaults.buttonColors(containerColor = p.accent),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.DeviceHub, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Activar como worker")
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            Divider(color = p.borderSoft)
+            Spacer(Modifier.height(20.dp))
+
+            // === SECCIÓN MAIN ===
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Unirse a un clúster",
+                    color = p.text,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f)
+                )
+                if (state.scanning) {
+                    CircularProgressIndicator(Modifier.size(16.dp), color = p.accent, strokeWidth = 2.dp)
+                } else {
+                    TextButton(onClick = onDiscover) {
+                        Icon(Icons.Filled.Refresh, null, tint = p.accent, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Buscar", color = p.accent, fontSize = 12.sp)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            if (state.discoveredWorkers.isEmpty() && !state.scanning) {
+                Text(
+                    "No se han encontrado workers.\nAsegúrate de que los otros teléfonos estén en la misma red Wi-Fi y tengan el worker activo.",
+                    color = p.muted,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+            } else {
+                LazyColumn(
+                    Modifier.fillMaxWidth().heightIn(max = 200.dp)
+                ) {
+                    items(state.discoveredWorkers) { endpoint ->
+                        val isSelected = selected.contains(endpoint)
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (isSelected) p.accent.copy(alpha = 0.1f) else Color.Transparent)
+                                .clickable {
+                                    if (isSelected) selected.remove(endpoint) else selected.add(endpoint)
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = isSelected,
+                                onCheckedChange = {
+                                    if (it) selected.add(endpoint) else selected.remove(endpoint)
+                                },
+                                colors = CheckboxDefaults.colors(checkedColor = p.accent)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                endpoint,
+                                color = p.text,
+                                fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Button(
+                onClick = { onStartCluster(selected.toList()) },
+                enabled = selected.isNotEmpty() && state.serverReady,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = p.accent,
+                    disabledContainerColor = p.border
+                ),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.Cloud, null, tint = Color.White, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (state.clusterMode) "Reiniciar clúster" else "Iniciar clúster",
+                    fontSize = 14.sp
+                )
+            }
+
+            if (!state.serverReady) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Primero debes cargar un modelo en el modo normal.",
+                    color = p.muted,
+                    fontSize = 11.sp
+                )
+            }
+
+            Spacer(Modifier.height(20.dp))
         }
     }
 }

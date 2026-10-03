@@ -73,7 +73,7 @@ jobs:
             -DGGML_OPENMP=OFF \
             -DGGML_RPC=ON \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-arm64 -j$(nproc) --target llama-server rpc-server
+          cmake --build build-arm64 -j$(nproc) --target llama-server rpc-server rpc-server
 
       - name: Build llama-server for armeabi-v7a
         run: |
@@ -93,7 +93,7 @@ jobs:
             -DGGML_CPU_REPACK=OFF \
             -DGGML_RPC=ON \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build build-armv7 -j$(nproc) --target llama-server rpc-server
+          cmake --build build-armv7 -j$(nproc) --target llama-server rpc-server rpc-server
 
       - name: Copy binaries to jniLibs
         run: |

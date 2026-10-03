@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,7 +99,12 @@ class MainActivity : ComponentActivity() {
                                 requestPermission.launch(StoragePermission.requiredPermissions())
                             }
                         },
-                        onOpenSettings = { showSettings = true }
+                        onOpenSettings = { showSettings = true },
+                        onOpenCluster = { vm.discoverWorkers() },
+                        onDiscoverWorkers = { vm.discoverWorkers() },
+                        onStartCluster = { endpoints -> vm.startCluster(endpoints) },
+                        onStartAsWorker = { vm.startAsWorker() },
+                        onStopWorker = { vm.stopWorker() }
                     )
 
                     if (showSettings) {
