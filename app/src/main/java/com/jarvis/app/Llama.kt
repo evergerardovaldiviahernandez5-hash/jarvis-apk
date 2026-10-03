@@ -36,13 +36,69 @@ class LlamaServer(private val context: Context) {
             pb.environment()["LD_LIBRARY_PATH"] = context.applicationInfo.nativeLibraryDir
             process = pb.start()
             Thread {
-                try {
-                    process!!.inputStream.bufferedReader().forEachLine { Log.d(TAG, it) }
-                } catch (_: Exception) {}
+                try { process!!.inputStream.bufferedReader().forEachLine { Log.d(TAG, it) } }
+                catch (_: Exception) {}
             }.start()
             true
         } catch (e: Exception) {
             Log.e(TAG, "Error arrancando", e); false
+        }
+    }
+
+    fun startWithRpc(
+        modelPath: String,
+        rpcEndpoints: List<String>,
+        ctxSize: Int,
+        threads: Int,
+        port: Int = 8081
+    ): Boolean {
+        stop()
+        return try {
+            val bin = File(context.applicationInfo.nativeLibraryDir, "libllama_server.so")
+            val cmd = mutableListOf(
+                bin.absolutePath, "-m", modelPath,
+                "--port", "$port", "--host", "127.0.0.1",
+                "--ctx-size", "$ctxSize", "--threads", "$threads"
+            )
+            if (rpcEndpoints.isNotEmpty()) {
+                cmd.add("--rpc")
+                cmd.add(rpcEndpoints.joinToString(","))
+            }
+            Log.i(TAG, "Clúster: ${cmd.joinToString(" ")}")
+            val pb = ProcessBuilder(cmd)
+            pb.redirectErrorStream(true)
+            pb.directory(context.filesDir)
+            pb.environment()["LD_LIBRARY_PATH"] = context.applicationInfo.nativeLibraryDir
+            process = pb.start()
+            Thread {
+                try { process!!.inputStream.bufferedReader().forEachLine { Log.d(TAG, it) } }
+                catch (_: Exception) {}
+            }.start()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error clúster", e); false
+        }
+    }
+
+    fun startRpcWorker(port: Int = 50052): Boolean {
+        stop()
+        return try {
+            val bin = File(context.applicationInfo.nativeLibraryDir, "librpc_server.so")
+            if (!bin.exists()) { Log.e(TAG, "librpc_server.so no encontrado"); return false }
+            val cmd = listOf(bin.absolutePath, "-p", port.toString(), "-H", "0.0.0.0")
+            Log.i(TAG, "RPC worker: ${cmd.joinToString(" ")}")
+            val pb = ProcessBuilder(cmd)
+            pb.redirectErrorStream(true)
+            pb.directory(context.filesDir)
+            pb.environment()["LD_LIBRARY_PATH"] = context.applicationInfo.nativeLibraryDir
+            process = pb.start()
+            Thread {
+                try { process!!.inputStream.bufferedReader().forEachLine { Log.d(TAG, "[RPC] $it") } }
+                catch (_: Exception) {}
+            }.start()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Error RPC worker", e); false
         }
     }
 
@@ -66,11 +122,6 @@ class LlamaServer(private val context: Context) {
             return false
         }
 
-        /**
-         * Espera hasta que llama-server responda 200 en /health.
-         * El puerto se abre ANTES de que el modelo esté listo, por eso hay que
-         * esperar al /health real o las primeras peticiones darán HTTP 503.
-         */
         fun waitForHealth(port: Int, timeoutMs: Long): Boolean {
             val client = OkHttpClient.Builder()
                 .connectTimeout(2, TimeUnit.SECONDS)
@@ -79,19 +130,11 @@ class LlamaServer(private val context: Context) {
             val start = System.currentTimeMillis()
             while (System.currentTimeMillis() - start < timeoutMs) {
                 try {
-                    val req = Request.Builder()
-                        .url("http://127.0.0.1:$port/health")
-                        .build()
-                    client.newCall(req).execute().use { res ->
-                        if (res.isSuccessful) {
-                            Log.i(TAG, "Health OK después de ${System.currentTimeMillis() - start} ms")
-                            return true
-                        }
-                    }
-                } catch (_: Exception) { /* todavía no responde */ }
+                    val req = Request.Builder().url("http://127.0.0.1:$port/health").build()
+                    client.newCall(req).execute().use { res -> if (res.isSuccessful) return true }
+                } catch (_: Exception) {}
                 Thread.sleep(500)
             }
-            Log.w(TAG, "Health timeout después de $timeoutMs ms")
             return false
         }
     }
@@ -139,13 +182,9 @@ class LlamaClient(private val baseUrl: String = "http://127.0.0.1:8081") {
                     val obj = JSONObject(data)
                     val choice = obj.optJSONArray("choices")?.optJSONObject(0) ?: continue
                     val deltaObj = choice.optJSONObject("delta") ?: continue
-
-                    // FIX: si content es JSON null, optString devuelve "null" como string.
-                    // Hay que comprobarlo explícitamente para no emitir "null".
                     if (deltaObj.isNull("content")) continue
                     val delta = deltaObj.optString("content", "")
-                    if (delta.isEmpty()) continue
-                    if (delta == "null") continue
+                    if (delta.isEmpty() || delta == "null") continue
                     emit(delta)
                 } catch (_: Exception) {}
             }
