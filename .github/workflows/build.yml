@@ -72,7 +72,6 @@ jobs:
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_OPENMP=OFF \
             -DGGML_RPC=ON \
-            -DGGML_BACKEND_DL=ON \
             -DCMAKE_BUILD_TYPE=Release
           # Detectar nombre del target RPC (rpc-server o ggml-rpc-server)
           RPC_TARGET="rpc-server"
@@ -80,7 +79,7 @@ jobs:
             RPC_TARGET="ggml-rpc-server"
           fi
           echo "RPC target detectado: $RPC_TARGET"
-          cmake --build build-arm64 -j$(nproc) --target llama-server $RPC_TARGET rpc-server
+          cmake --build build-arm64 -j$(nproc) --target llama-server $RPC_TARGET
 
       - name: Build llama-server for armeabi-v7a
         run: |
@@ -99,13 +98,12 @@ jobs:
             -DGGML_CPU_ARM_ARCH=armv7-a \
             -DGGML_CPU_REPACK=OFF \
             -DGGML_RPC=ON \
-            -DGGML_BACKEND_DL=ON \
             -DCMAKE_BUILD_TYPE=Release
           RPC_TARGET="rpc-server"
           if cmake --build build-armv7 --target help 2>/dev/null | grep -q "ggml-rpc-server"; then
             RPC_TARGET="ggml-rpc-server"
           fi
-          cmake --build build-armv7 -j$(nproc) --target llama-server $RPC_TARGET rpc-server
+          cmake --build build-armv7 -j$(nproc) --target llama-server $RPC_TARGET
 
       - name: Copy binaries to jniLibs
         run: |
