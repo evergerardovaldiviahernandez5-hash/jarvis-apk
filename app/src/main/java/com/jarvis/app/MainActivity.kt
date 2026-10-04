@@ -100,7 +100,6 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onOpenSettings = { showSettings = true },
-                        onOpenCluster = { vm.discoverWorkers() },
                         onDiscoverWorkers = { vm.discoverWorkers() },
                         onStartCluster = { endpoints -> vm.startCluster(endpoints) },
                         onStartAsWorker = { vm.startAsWorker() },
