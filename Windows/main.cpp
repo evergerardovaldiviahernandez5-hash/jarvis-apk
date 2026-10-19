@@ -16,6 +16,9 @@ int main() {
         return 1;
     }
 
+    // NUEVO: Obtener el vocabulario por separado (requerido por la API de Octubre 2024)
+    const llama_vocab * vocab = llama_model_get_vocab(model);
+
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = 2048;
     ctx_params.n_threads = 2;
@@ -31,9 +34,9 @@ int main() {
         if (prompt == "salir" || prompt == "exit") break;
 
         std::vector<llama_token> tokens_list(prompt.length() + 1);
-        int n_tokens = llama_tokenize(model, prompt.c_str(), prompt.length(), tokens_list.data(), tokens_list.size(), true, false);
+        // Usar vocab en lugar de model
+        int n_tokens = llama_tokenize(vocab, prompt.c_str(), prompt.length(), tokens_list.data(), tokens_list.size(), true, false);
 
-        // Procesar el prompt inicial
         llama_batch batch = llama_batch_init(n_tokens, 0, 1);
         for (int i = 0; i < n_tokens; i++) {
             batch.token[i] = tokens_list[i];
@@ -48,22 +51,24 @@ int main() {
         if (llama_decode(ctx, batch)) { std::cerr << "Error al procesar." << std::endl; llama_batch_free(batch); continue; }
 
         std::cout << "Jarvis: ";
-        int current_pos = n_tokens; // Llevar el control de la posicion
+        int current_pos = n_tokens;
 
         for (int i = 0; i < 256; i++) {
             auto * logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
             llama_token id = 0;
             float max_logit = -1e9;
-            for (int j = 0; j < llama_n_vocab(model); j++) {
+            // Usar vocab para obtener el total de palabras
+            for (int j = 0; j < llama_vocab_n_tokens(vocab); j++) {
                 if (logits[j] > max_logit) { max_logit = logits[j]; id = j; }
             }
-            if (id == llama_token_eos(model)) break;
+            // Usar vocab para verificar el fin de texto
+            if (id == llama_vocab_eos(vocab)) break;
             
             char buf[128];
-            int n = llama_token_to_piece(model, id, buf, sizeof(buf), 0, true);
+            // Usar vocab para convertir a texto
+            int n = llama_token_to_piece(vocab, id, buf, sizeof(buf), 0, true);
             if (n > 0) std::cout << std::string(buf, n) << std::flush;
             
-            // Crear el batch para el siguiente token (API actualizada)
             llama_batch next_batch = llama_batch_init(1, 0, 1);
             next_batch.token[0] = id;
             next_batch.pos[0] = current_pos;
@@ -76,7 +81,7 @@ int main() {
             
             llama_batch_free(batch);
             batch = next_batch;
-            current_pos++; // Incrementar la posicion
+            current_pos++;
         }
         std::cout << std::endl;
         llama_batch_free(batch);
