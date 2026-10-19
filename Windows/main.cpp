@@ -4,6 +4,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <stdexcept>
 #include "llama.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -119,82 +120,67 @@ void GenerateResponse(std::string prompt) {
 }
 
 int main() {
-    llama_backend_init();
+    // PAUSA DE SEGURIDAD: Si ves esto, el programa arrancó bien.
+    std::cout << "=== NOVA SE ESTA INICIANDO ===" << std::endl;
+    std::cout << "Si ves este mensaje, presiona ENTER en esta ventana negra para abrir Nova..." << std::endl;
+    std::cin.get();
 
-    if (!glfwInit()) {
-        std::cerr << "Error critico: No se pudo inicializar GLFW." << std::endl;
-        system("pause");
-        return 1;
-    }
+    try {
+        llama_backend_init();
 
-    // Quitamos la restriccion de OpenGL 3.0 para que funcione en el Celeron
-    GLFWwindow* window = glfwCreateWindow(800, 600, "Nova AI", NULL, NULL);
-    
-    if (!window) {
-        std::cerr << "Error critico: No se pudo crear la ventana. Tu tarjeta grafica no soporta OpenGL." << std::endl;
-        system("pause"); // Esto evita que la ventana se cierre y te deja leer el error
-        glfwTerminate();
-        return 1;
-    }
-
-    glfwMakeContextCurrent(window);
-    glfwSwapInterval(1);
-
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(window, true);
-    
-    // Usar version 120 de OpenGL (compatible con tarjetas viejas)
-    ImGui_ImplOpenGL3_Init("#version 120");
-
-    while (!glfwWindowShouldClose(window)) {
-        glfwPollEvents();
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(io.DisplaySize);
-        ImGui::Begin("Nova AI", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
-
-        if (ImGui::Button("Cargar Modelo (.gguf)")) {
-            std::string path = OpenFileDialog();
-            if (!path.empty()) LoadModel(path);
+        if (!glfwInit()) {
+            std::cerr << "ERROR: Fallo al iniciar la libreria de ventanas (GLFW)." << std::endl;
+            system("pause");
+            return 1;
         }
-        ImGui::SameLine();
-        ImGui::Text("Modelo actual: %s", current_model_path.c_str());
 
-        ImGui::Separator();
-
-        ImGui::BeginChild("Chat", ImVec2(0, -50), true);
-        {
-            std::lock_guard<std::mutex> lock(chat_mutex);
-            ImGui::TextWrapped("%s", chat_history.c_str());
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+        GLFWwindow* window = glfwCreateWindow(800, 600, "Nova AI", NULL, NULL);
+        if (!window) {
+            std::cerr << "ERROR: Tu tarjeta grafica no soporta la creacion de la ventana." << std::endl;
+            system("pause");
+            glfwTerminate();
+            return 1;
         }
-        ImGui::EndChild();
 
-        ImGui::PushItemWidth(-80);
-        if (ImGui::InputText("##input", input_buffer, sizeof(input_buffer), ImGuiInputTextFlags_EnterReturnsTrue) && !is_generating) {
-            if (strlen(input_buffer) > 0) {
-                std::string prompt(input_buffer);
-                {
-                    std::lock_guard<std::mutex> lock(chat_mutex);
-                    chat_history += "Tú: " + prompt + "\n";
-                }
-                std::thread(GenerateResponse, prompt).detach();
-                input_buffer[0] = '\0';
+        glfwMakeContextCurrent(window);
+        glfwSwapInterval(1);
+
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO(); (void)io;
+        ImGui::StyleColorsDark();
+        ImGui_ImplGlfw_InitForOpenGL(window, true);
+        ImGui_ImplOpenGL3_Init("#version 120");
+
+        while (!glfwWindowShouldClose(window)) {
+            glfwPollEvents();
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImGui::SetNextWindowSize(io.DisplaySize);
+            ImGui::Begin("Nova AI", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+
+            if (ImGui::Button("Cargar Modelo (.gguf)")) {
+                std::string path = OpenFileDialog();
+                if (!path.empty()) LoadModel(path);
             }
-        }
-        ImGui::PopItemWidth();
-        ImGui::SameLine();
-        
-        if (is_generating) {
-            ImGui::TextColored(ImVec4(1, 1, 0, 1), "Pensando...");
-        } else {
-            if (ImGui::Button("Enviar")) {
+            ImGui::SameLine();
+            ImGui::Text("Modelo actual: %s", current_model_path.c_str());
+
+            ImGui::Separator();
+
+            ImGui::BeginChild("Chat", ImVec2(0, -50), true);
+            {
+                std::lock_guard<std::mutex> lock(chat_mutex);
+                ImGui::TextWrapped("%s", chat_history.c_str());
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+            }
+            ImGui::EndChild();
+
+            ImGui::PushItemWidth(-80);
+            if (ImGui::InputText("##input", input_buffer, sizeof(input_buffer), ImGuiInputTextFlags_EnterReturnsTrue) && !is_generating) {
                 if (strlen(input_buffer) > 0) {
                     std::string prompt(input_buffer);
                     {
@@ -205,27 +191,51 @@ int main() {
                     input_buffer[0] = '\0';
                 }
             }
+            ImGui::PopItemWidth();
+            ImGui::SameLine();
+            
+            if (is_generating) {
+                ImGui::TextColored(ImVec4(1, 1, 0, 1), "Pensando...");
+            } else {
+                if (ImGui::Button("Enviar")) {
+                    if (strlen(input_buffer) > 0) {
+                        std::string prompt(input_buffer);
+                        {
+                            std::lock_guard<std::mutex> lock(chat_mutex);
+                            chat_history += "Tú: " + prompt + "\n";
+                        }
+                        std::thread(GenerateResponse, prompt).detach();
+                        input_buffer[0] = '\0';
+                    }
+                }
+            }
+
+            ImGui::End();
+            ImGui::Render();
+            int display_w, display_h;
+            glfwGetFramebufferSize(window, &display_w, &display_h);
+            glViewport(0, 0, display_w, display_h);
+            glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+            glfwSwapBuffers(window);
         }
 
-        ImGui::End();
-        ImGui::Render();
-        int display_w, display_h;
-        glfwGetFramebufferSize(window, &display_w, &display_h);
-        glViewport(0, 0, display_w, display_h);
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-        glfwSwapBuffers(window);
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext();
+        glfwDestroyWindow(window);
+        glfwTerminate();
+
+        if (model) llama_free_model(model);
+        if (ctx) llama_free(ctx);
+        llama_backend_free();
+    } catch (const std::exception& e) {
+        std::cerr << "ERROR FATAL: " << e.what() << std::endl;
+        system("pause");
+    } catch (...) {
+        std::cerr << "ERROR FATAL DESCONOCIDO" << std::endl;
+        system("pause");
     }
-
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
-    glfwDestroyWindow(window);
-    glfwTerminate();
-
-    if (model) llama_free_model(model);
-    if (ctx) llama_free(ctx);
-    llama_backend_free();
     return 0;
 }
