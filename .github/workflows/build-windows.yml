@@ -30,23 +30,20 @@ jobs:
           cd Windows
           mkdir -p build
           cd build
-          # Forzamos la compilación genérica (sin AVX2 ni instrucciones modernas)
+          # Compilación ultra-compatible
           cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release \
-            -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=OFF -DGGML_F16C=OFF \
+            -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_F16C=OFF -DGGML_FMA=OFF \
             -DBUILD_SHARED_LIBS=OFF -DLLAMA_OPENMP=OFF -DGGML_OPENMP=OFF \
             -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
           mingw32-make -j2
-      - name: Package Nova and required DLLs
+      - name: Package ONLY the EXE
         shell: msys2 {0}
         run: |
           mkdir -p dist
           cp Windows/build/Nova.exe dist/
-          cp /ucrt64/bin/libstdc++-6.dll dist/ || true
-          cp /ucrt64/bin/libgcc_s_seh-1.dll dist/ || true
-          cp /ucrt64/bin/libwinpthread-1.dll dist/ || true
-          cp /ucrt64/bin/zlib1.dll dist/ || true
           cd dist
-          zip -r ../Nova-Windows-EXE.zip *
+          # Solo empaquetamos Nova.exe
+          zip -r ../Nova-Windows-EXE.zip Nova.exe
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
