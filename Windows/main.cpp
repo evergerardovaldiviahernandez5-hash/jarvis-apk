@@ -95,22 +95,12 @@ void GenerateResponse(std::string prompt) {
 }
 
 int main() {
-    std::cout << "=== NOVA SE ESTA INICIANDO ===" << std::endl;
-    std::cout << "Presiona ENTER para iniciar..." << std::endl;
-    std::cin.get();
-
     try {
-        std::cout << "[1/5] Iniciando backend de llama..." << std::endl;
-        // Protegemos la inicialización por si acaso
-        try {
-            llama_backend_init();
-        } catch (const std::exception& e) {
-            std::cerr << "Error en llama_backend_init: " << e.what() << std::endl;
-            system("pause");
-        }
-        std::cout << "[1/5] Backend OK." << std::endl;
+        std::cout << "=== NOVA SE ESTA INICIANDO (MSVC) ===" << std::endl;
+        std::cout << "Presiona ENTER para iniciar..." << std::endl;
+        std::cin.get();
 
-        std::cout << "[2/5] Iniciando GLFW..." << std::endl;
+        std::cout << "[1/4] Iniciando GLFW..." << std::endl;
         if (!glfwInit()) {
             std::cerr << "ERROR: Fallo al iniciar GLFW." << std::endl;
             system("pause"); return 1;
@@ -120,14 +110,14 @@ int main() {
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
         glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
 
-        std::cout << "[3/5] Creando ventana..." << std::endl;
+        std::cout << "[2/4] Creando ventana..." << std::endl;
         GLFWwindow* window = glfwCreateWindow(800, 600, "Nova AI", NULL, NULL);
         if (!window) {
             std::cerr << "ERROR: Fallo al crear la ventana." << std::endl;
             system("pause"); glfwTerminate(); return 1;
         }
 
-        std::cout << "[4/5] Configurando ImGui..." << std::endl;
+        std::cout << "[3/4] Configurando ImGui..." << std::endl;
         glfwMakeContextCurrent(window);
         glfwSwapInterval(1);
         IMGUI_CHECKVERSION();
@@ -137,7 +127,7 @@ int main() {
         ImGui_ImplGlfw_InitForOpenGL(window, true);
         ImGui_ImplOpenGL3_Init("#version 120");
 
-        std::cout << "[5/5] Entrando al bucle principal..." << std::endl;
+        std::cout << "[4/4] Entrando al bucle principal..." << std::endl;
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
             ImGui_ImplOpenGL3_NewFrame();
@@ -208,7 +198,6 @@ int main() {
 
         if (model) llama_free_model(model);
         if (ctx) llama_free(ctx);
-        llama_backend_free();
     } catch (const std::exception& e) {
         std::cerr << "ERROR FATAL: " << e.what() << std::endl;
         system("pause");

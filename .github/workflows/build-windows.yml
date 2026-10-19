@@ -10,40 +10,37 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: true
-          install: >-
-            base-devel git zip mingw-w64-ucrt-x86_64-toolchain
-            mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-make
-            mingw-w64-ucrt-x86_64-glfw
+
       - name: Clone dependencies
-        shell: msys2 {0}
         run: |
           git clone https://github.com/ggerganov/llama.cpp.git
           git clone https://github.com/ocornut/imgui.git
-      - name: Build Nova and llama.cpp
-        shell: msys2 {0}
+          git clone https://github.com/glfw/glfw.git
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.29.x'
+
+      - name: Configure and Build with MSVC
         run: |
-          cd Windows
-          mkdir -p build
+          mkdir build
           cd build
-          # Compilación ultra-compatible
-          cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release \
-            -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_F16C=OFF -DGGML_FMA=OFF \
-            -DBUILD_SHARED_LIBS=OFF -DLLAMA_OPENMP=OFF -DGGML_OPENMP=OFF \
-            -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
-          mingw32-make -j2
+          # Usar Visual Studio 2022 (MSVC) y compilar todo de forma estatica
+          cmake .. -G "Visual Studio 17 2022" -A x64 -DCMAKE_BUILD_TYPE=Release ^
+            -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_F16C=OFF ^
+            -DBUILD_SHARED_LIBS=OFF -DLLAMA_OPENMP=OFF -DGGML_OPENMP=OFF ^
+            -DCMAKE_MSVC_RUNTIME_LIBRARY="MultiThreaded"
+          cmake --build . --config Release
+
       - name: Package ONLY the EXE
-        shell: msys2 {0}
         run: |
-          mkdir -p dist
-          cp Windows/build/Nova.exe dist/
+          mkdir dist
+          copy build\Release\Nova.exe dist\
           cd dist
-          # Solo empaquetamos Nova.exe
-          zip -r ../Nova-Windows-EXE.zip Nova.exe
+          # Usar PowerShell para comprimir en ZIP
+          Compress-Archive -Path Nova.exe -DestinationPath ..\Nova-Windows-EXE.zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
