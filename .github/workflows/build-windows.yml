@@ -33,13 +33,17 @@ jobs:
         run: |
           git clone https://github.com/ggerganov/llama.cpp.git
 
-      - name: Build llama.cpp and Jarvis
+      - name: Build llama.cpp and Jarvis (Static Linking)
         shell: msys2 {0}
         run: |
           cd $GITHUB_WORKSPACE/Windows
           mkdir -p build
           cd build
-          cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_AVX2=OFF -DLLAMA_AVX=ON -DLLAMA_F16C=OFF
+          # Se añaden los flags -static para empaquetar las DLLs dentro del EXE
+          cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_AVX2=OFF -DLLAMA_AVX=ON -DLLAMA_F16C=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
           mingw32-make -j2
 
       - name: Package executable ONLY (No GGUF)
@@ -47,6 +51,7 @@ jobs:
         run: |
           mkdir -p dist
           cp $GITHUB_WORKSPACE/Windows/build/jarvis_win.exe dist/
+          # Copiamos las DLLs por si acaso alguna se resiste al enlazado estático
           cp $GITHUB_WORKSPACE/Windows/build/*.dll dist/ || true
           cd dist
           zip -r ../Jarvis-Windows-EXE.zip *
