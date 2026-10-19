@@ -1,9 +1,7 @@
 name: Build Windows Executable
 
 on:
-  workflow_dispatch: # Permite ejecutarlo manualmente desde la pestaña "Actions"
-  push:
-    branches: [ main ]
+  workflow_dispatch: # Solo se ejecuta manualmente desde Termux o la web
 
 jobs:
   build-windows:
@@ -50,8 +48,6 @@ jobs:
           mkdir -p dist
           cp $GITHUB_WORKSPACE/Windows/build/jarvis_win.exe dist/
           cp model.gguf dist/
-          # Copiar cualquier DLL necesaria (por si acaso)
-          cp $GITHUB_WORKSPACE/Windows/build/*.dll dist/ || true
           7z a -tzip jarvis-windows.zip ./dist/*
 
       - name: Upload artifact
