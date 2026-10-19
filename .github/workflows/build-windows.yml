@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: \${{ github.workflow }}-\${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -38,7 +38,7 @@ jobs:
       - name: Build Nova and llama.cpp
         shell: msys2 {0}
         run: |
-          cd \$GITHUB_WORKSPACE/Windows
+          cd Windows
           mkdir -p build
           cd build
           cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release \
@@ -52,7 +52,7 @@ jobs:
         shell: msys2 {0}
         run: |
           mkdir -p dist
-          cp \$GITHUB_WORKSPACE/Windows/build/Nova.exe dist/
+          cp Windows/build/Nova.exe dist/
           
           cp /ucrt64/bin/libstdc++-6.dll dist/ || true
           cp /ucrt64/bin/libgcc_s_seh-1.dll dist/ || true
