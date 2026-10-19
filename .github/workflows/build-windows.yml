@@ -1,10 +1,10 @@
-name: Build Windows EXE
+name: Build Nova Windows EXE
 
 on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: \${{ github.workflow }}-\${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -27,19 +27,20 @@ jobs:
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-make
+            mingw-w64-ucrt-x86_64-glfw
 
-      - name: Clone llama.cpp
+      - name: Clone dependencies
         shell: msys2 {0}
         run: |
           git clone https://github.com/ggerganov/llama.cpp.git
+          git clone https://github.com/ocornut/imgui.git
 
-      - name: Build llama.cpp and Jarvis (Static & No OpenMP)
+      - name: Build Nova and llama.cpp
         shell: msys2 {0}
         run: |
-          cd $GITHUB_WORKSPACE/Windows
+          cd \$GITHUB_WORKSPACE/Windows
           mkdir -p build
           cd build
-          # Desactivamos OpenMP para evitar libgomp-1.dll y forzamos enlazado estatico
           cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
             -DLLAMA_OPENMP=OFF \
@@ -47,24 +48,23 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
           mingw32-make -j2
 
-      - name: Package executable and required DLLs
+      - name: Package Nova and required DLLs
         shell: msys2 {0}
         run: |
           mkdir -p dist
-          cp $GITHUB_WORKSPACE/Windows/build/jarvis_win.exe dist/
+          cp \$GITHUB_WORKSPACE/Windows/build/Nova.exe dist/
           
-          # Copiamos las DLLs escenciales de MinGW por si acaso
           cp /ucrt64/bin/libstdc++-6.dll dist/ || true
           cp /ucrt64/bin/libgcc_s_seh-1.dll dist/ || true
           cp /ucrt64/bin/libwinpthread-1.dll dist/ || true
-          cp /ucrt64/bin/libgomp-1.dll dist/ || true
           cp /ucrt64/bin/zlib1.dll dist/ || true
+          cp /ucrt64/bin/glfw3.dll dist/ || true
           
           cd dist
-          zip -r ../Jarvis-Windows-EXE.zip *
+          zip -r ../Nova-Windows-EXE.zip *
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Jarvis-Windows-EXE
-          path: Jarvis-Windows-EXE.zip
+          name: Nova-Windows-EXE
+          path: Nova-Windows-EXE.zip
