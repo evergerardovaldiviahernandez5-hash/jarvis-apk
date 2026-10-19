@@ -10,8 +10,11 @@ set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(LLAMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp")
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../imgui")
 
-add_subdirectory(${LLAMA_DIR} llama.cpp_build)
+# Forzar GLFW estático
+set(GLFW_USE_STATIC_LIBS ON)
 find_package(glfw3 REQUIRED)
+
+add_subdirectory(${LLAMA_DIR} llama.cpp_build)
 
 add_executable(Nova
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
