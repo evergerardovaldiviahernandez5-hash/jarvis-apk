@@ -1,0 +1,61 @@
+name: Build Windows Executable
+
+on:
+  workflow_dispatch: # Permite ejecutarlo manualmente desde la pestaña "Actions"
+  push:
+    branches: [ main ]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            git
+            mingw-w64-ucrt-x86_64-toolchain
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-make
+
+      - name: Clone llama.cpp
+        shell: msys2 {0}
+        run: |
+          git clone https://github.com/ggerganov/llama.cpp.git
+
+      - name: Build llama.cpp and Jarvis
+        shell: msys2 {0}
+        run: |
+          cd $GITHUB_WORKSPACE/Windows
+          mkdir -p build
+          cd build
+          cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_AVX2=OFF -DLLAMA_AVX=ON -DLLAMA_F16C=OFF
+          mingw32-make -j2
+
+      - name: Download model (Qwen 1.5B)
+        shell: msys2 {0}
+        run: |
+          curl -L -o model.gguf "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+
+      - name: Package artifacts
+        shell: msys2 {0}
+        run: |
+          mkdir -p dist
+          cp $GITHUB_WORKSPACE/Windows/build/jarvis_win.exe dist/
+          cp model.gguf dist/
+          # Copiar cualquier DLL necesaria (por si acaso)
+          cp $GITHUB_WORKSPACE/Windows/build/*.dll dist/ || true
+          7z a -tzip jarvis-windows.zip ./dist/*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-windows
+          path: jarvis-windows.zip
