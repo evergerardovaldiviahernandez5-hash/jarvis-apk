@@ -23,6 +23,11 @@ std::string chat_history = "Nova: ¡Hola! Soy Nova. Por favor, carga un modelo (
 std::atomic<bool> is_generating(false);
 std::mutex chat_mutex;
 
+// Función para imprimir errores de GLFW
+void glfw_error_callback(int error, const char* description) {
+    std::cerr << "GLFW Error " << error << ": " << description << std::endl;
+}
+
 std::string OpenFileDialog() {
     OPENFILENAMEA ofn;
     char szFile[260] = { 0 };
@@ -96,36 +101,42 @@ void GenerateResponse(std::string prompt) {
 
 int main() {
     try {
-        std::cout << "=== NOVA SE ESTA INICIANDO (MSVC) ===" << std::endl;
+        std::cout << "=== NOVA SE ESTA INICIANDO ===" << std::endl;
         std::cout << "Presiona ENTER para iniciar..." << std::endl;
         std::cin.get();
 
         std::cout << "[1/4] Iniciando GLFW..." << std::endl;
+        glfwSetErrorCallback(glfw_error_callback);
         if (!glfwInit()) {
             std::cerr << "ERROR: Fallo al iniciar GLFW." << std::endl;
             system("pause"); return 1;
         }
 
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 2);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+        // MUY IMPORTANTE: Quitamos las restricciones de version para que use lo que tenga el sistema
+        glfwDefaultWindowHints();
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
         std::cout << "[2/4] Creando ventana..." << std::endl;
         GLFWwindow* window = glfwCreateWindow(800, 600, "Nova AI", NULL, NULL);
         if (!window) {
-            std::cerr << "ERROR: Fallo al crear la ventana." << std::endl;
+            std::cerr << "ERROR: Fallo al crear la ventana. (Revisa los errores de GLFW arriba)" << std::endl;
             system("pause"); glfwTerminate(); return 1;
         }
 
         std::cout << "[3/4] Configurando ImGui..." << std::endl;
         glfwMakeContextCurrent(window);
         glfwSwapInterval(1);
+        glfwShowWindow(window); // Mostrar recien ahora
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         ImGui::StyleColorsDark();
         ImGui_ImplGlfw_InitForOpenGL(window, true);
-        ImGui_ImplOpenGL3_Init("#version 120");
+        
+        // Intentar inicializar OpenGL3 con la version mas basica
+        if (!ImGui_ImplOpenGL3_Init("#version 130")) {
+            std::cerr << "ERROR: No se pudo inicializar el backend de OpenGL 3." << std::endl;
+        }
 
         std::cout << "[4/4] Entrando al bucle principal..." << std::endl;
         while (!glfwWindowShouldClose(window)) {
