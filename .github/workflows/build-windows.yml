@@ -30,17 +30,18 @@ jobs:
         run: |
           git clone https://github.com/ggerganov/llama.cpp.git
           git clone https://github.com/ocornut/imgui.git
+          # AHORA SÍ DESCARGAMOS GLFW
+          git clone https://github.com/glfw/glfw.git
 
-      - name: Build Nova (Ultra-Compatible)
+      - name: Build Nova (Compatible)
         shell: msys2 {0}
         run: |
           cd Windows
           mkdir -p build
           cd build
-          # Forzar arquitectura genérica x86-64 y desactivar TODA instrucción AVX
           cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_FLAGS="-march=x86-64 -mtune=generic" \
-            -DCMAKE_CXX_FLAGS="-march=x86-64 -mtune=generic" \
+            -DCMAKE_C_FLAGS="-march=x86-64" \
+            -DCMAKE_CXX_FLAGS="-march=x86-64" \
             -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_F16C=OFF -DGGML_FMA=OFF \
             -DBUILD_SHARED_LIBS=OFF -DLLAMA_OPENMP=OFF -DGGML_OPENMP=OFF \
             -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
@@ -52,7 +53,6 @@ jobs:
           mkdir -p dist
           cp Windows/build/Nova.exe dist/
           cd dist
-          # Solo comprimimos Nova.exe, NADA de DLLs
           zip -r ../Nova-Windows-EXE.zip Nova.exe
 
       - name: Upload artifact
