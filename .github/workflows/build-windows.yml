@@ -1,9 +1,8 @@
 name: Build Windows Executable
 
 on:
-  workflow_dispatch: # Solo manual
+  workflow_dispatch:
 
-# ESTO EVITA QUE SE ACUMULEN LOS FLUJOS
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -24,6 +23,7 @@ jobs:
           install: >-
             base-devel
             git
+            zip
             mingw-w64-ucrt-x86_64-toolchain
             mingw-w64-ucrt-x86_64-cmake
             mingw-w64-ucrt-x86_64-make
@@ -42,21 +42,18 @@ jobs:
           cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DLLAMA_AVX2=OFF -DLLAMA_AVX=ON -DLLAMA_F16C=OFF
           mingw32-make -j2
 
-      - name: Download model (Qwen 1.5B)
-        shell: msys2 {0}
-        run: |
-          curl -L -o model.gguf "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf"
-
-      - name: Package artifacts
+      - name: Package executable ONLY (No GGUF)
         shell: msys2 {0}
         run: |
           mkdir -p dist
           cp $GITHUB_WORKSPACE/Windows/build/jarvis_win.exe dist/
-          cp model.gguf dist/
-          7z a -tzip jarvis-windows.zip ./dist/*
+          # Copiar DLLs en caso de que se hayan generado (por seguridad)
+          cp $GITHUB_WORKSPACE/Windows/build/*.dll dist/ || true
+          cd dist
+          zip -r ../Jarvis-Windows-EXE.zip *
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: jarvis-windows
-          path: jarvis-windows.zip
+          name: Jarvis-Windows-EXE
+          path: Jarvis-Windows-EXE.zip
