@@ -1,7 +1,12 @@
 name: Build Windows Executable
 
 on:
-  workflow_dispatch: # Solo se ejecuta manualmente desde Termux o la web
+  workflow_dispatch: # Solo manual
+
+# ESTO EVITA QUE SE ACUMULEN LOS FLUJOS
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build-windows:
