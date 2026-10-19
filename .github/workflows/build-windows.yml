@@ -1,4 +1,4 @@
-name: Build Windows Executable
+name: Build Windows EXE
 
 on:
   workflow_dispatch:
@@ -47,7 +47,6 @@ jobs:
         run: |
           mkdir -p dist
           cp $GITHUB_WORKSPACE/Windows/build/jarvis_win.exe dist/
-          # Copiar DLLs en caso de que se hayan generado (por seguridad)
           cp $GITHUB_WORKSPACE/Windows/build/*.dll dist/ || true
           cd dist
           zip -r ../Jarvis-Windows-EXE.zip *
