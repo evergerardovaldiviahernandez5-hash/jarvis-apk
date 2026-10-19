@@ -7,22 +7,21 @@ set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 
-# Enlazar llama.cpp estáticamente
 add_subdirectory(../llama.cpp llama.cpp_build)
 
-# Buscar GLFW (viene instalado por MSYS2)
 find_package(glfw3 REQUIRED)
 
-# Incluir ImGui
 set(IMGUI_DIR "../imgui")
-add_executable(Nova WIN32 main.cpp
-    ${IMGUI_DIR}/imgui.cpp
-    ${IMGUI_DIR}/imgui_draw.cpp
-    ${IMGUI_DIR}/imgui_tables.cpp
-    ${IMGUI_DIR}/imgui_widgets.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+# Quitamos la palabra WIN32 para que busque 'main' normalmente
+add_executable(Nova main.cpp
+    \${IMGUI_DIR}/imgui.cpp
+    \${IMGUI_DIR}/imgui_draw.cpp
+    \${IMGUI_DIR}/imgui_tables.cpp
+    \${IMGUI_DIR}/imgui_widgets.cpp
+    \${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    \${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
-target_include_directories(Nova PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backends)
-target_link_libraries(Nova PRIVATE llama ggml glfw opengl32 gdi32 comdlg32)
+target_include_directories(Nova PRIVATE \${IMGUI_DIR} \${IMGUI_DIR}/backends)
+# Añadimos user32, shell32 y ole32 que son necesarias para la ventana y el buscador de archivos
+target_link_libraries(Nova PRIVATE llama ggml glfw opengl32 gdi32 comdlg32 user32 shell32 ole32)
