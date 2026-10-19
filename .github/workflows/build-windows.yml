@@ -33,26 +33,33 @@ jobs:
         run: |
           git clone https://github.com/ggerganov/llama.cpp.git
 
-      - name: Build llama.cpp and Jarvis (Static Linking)
+      - name: Build llama.cpp and Jarvis (Static & No OpenMP)
         shell: msys2 {0}
         run: |
           cd $GITHUB_WORKSPACE/Windows
           mkdir -p build
           cd build
-          # Se añaden los flags -static para empaquetar las DLLs dentro del EXE
+          # Desactivamos OpenMP para evitar libgomp-1.dll y forzamos enlazado estatico
           cmake .. -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release \
             -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_OPENMP=OFF \
             -DLLAMA_AVX2=OFF -DLLAMA_AVX=ON -DLLAMA_F16C=OFF \
             -DCMAKE_EXE_LINKER_FLAGS="-static -static-libgcc -static-libstdc++"
           mingw32-make -j2
 
-      - name: Package executable ONLY (No GGUF)
+      - name: Package executable and required DLLs
         shell: msys2 {0}
         run: |
           mkdir -p dist
           cp $GITHUB_WORKSPACE/Windows/build/jarvis_win.exe dist/
-          # Copiamos las DLLs por si acaso alguna se resiste al enlazado estático
-          cp $GITHUB_WORKSPACE/Windows/build/*.dll dist/ || true
+          
+          # Copiamos las DLLs escenciales de MinGW por si acaso
+          cp /ucrt64/bin/libstdc++-6.dll dist/ || true
+          cp /ucrt64/bin/libgcc_s_seh-1.dll dist/ || true
+          cp /ucrt64/bin/libwinpthread-1.dll dist/ || true
+          cp /ucrt64/bin/libgomp-1.dll dist/ || true
+          cp /ucrt64/bin/zlib1.dll dist/ || true
+          
           cd dist
           zip -r ../Jarvis-Windows-EXE.zip *
 
