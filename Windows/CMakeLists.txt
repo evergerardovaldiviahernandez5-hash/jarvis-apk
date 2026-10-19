@@ -7,12 +7,10 @@ set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 
-# Usar rutas absolutas basadas en la ubicación del CMakeLists.txt
 set(LLAMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp")
 set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../imgui")
 
 add_subdirectory(${LLAMA_DIR} llama.cpp_build)
-
 find_package(glfw3 REQUIRED)
 
 add_executable(Nova

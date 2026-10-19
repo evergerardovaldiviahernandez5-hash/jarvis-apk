@@ -12,7 +12,6 @@
 #include <windows.h>
 #include <commdlg.h>
 
-// Variables globales
 llama_model * model = nullptr;
 llama_context * ctx = nullptr;
 const llama_vocab * vocab = nullptr;
@@ -23,7 +22,6 @@ std::string chat_history = "Nova: ¡Hola! Soy Nova. Por favor, carga un modelo (
 std::atomic<bool> is_generating(false);
 std::mutex chat_mutex;
 
-// Función para abrir el explorador de archivos de Windows
 std::string OpenFileDialog() {
     OPENFILENAMEA ofn;
     char szFile[260] = { 0 };
@@ -35,26 +33,16 @@ std::string OpenFileDialog() {
     ofn.lpstrFilter = "Modelos GGUF\0*.gguf\0Todos los archivos\0*.*\0";
     ofn.nFilterIndex = 1;
     ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
-
-    if (GetOpenFileNameA(&ofn) == TRUE) {
-        return std::string(ofn.lpstrFile);
-    }
+    if (GetOpenFileNameA(&ofn) == TRUE) return std::string(ofn.lpstrFile);
     return "";
 }
 
-// Función para cargar el modelo
 void LoadModel(const std::string& path) {
-    if (model) {
-        llama_free_model(model);
-        model = nullptr;
-    }
-    if (ctx) {
-        llama_free(ctx);
-        ctx = nullptr;
-    }
+    if (model) { llama_free_model(model); model = nullptr; }
+    if (ctx) { llama_free(ctx); ctx = nullptr; }
 
     llama_model_params model_params = llama_model_default_params();
-    model_params.n_gpu_layers = 0; // Sin GPU
+    model_params.n_gpu_layers = 0;
     model = llama_load_model_from_file(path.c_str(), model_params);
 
     if (model) {
@@ -64,7 +52,6 @@ void LoadModel(const std::string& path) {
         ctx_params.n_threads = 2;
         ctx_params.n_threads_batch = 2;
         ctx = llama_new_context_with_model(model, ctx_params);
-        
         std::lock_guard<std::mutex> lock(chat_mutex);
         current_model_path = path;
         chat_history += "\n[Sistema]: Modelo cargado correctamente.\n\n";
@@ -74,14 +61,11 @@ void LoadModel(const std::string& path) {
     }
 }
 
-// Función que corre la IA en un hilo separado para no congelar la ventana
 void GenerateResponse(std::string prompt) {
     if (!model || !ctx) return;
     is_generating = true;
-
-    std::string full_prompt = "Eres Nova, un asistente de IA amigable y util. Responde en español.\nUsuario: " + prompt + "\nNova: ";
+    std::string full_prompt = "Eres Nova, un asistente de IA amigable. Responde en español.\nUsuario: " + prompt + "\nNova: ";
     
-    // Tokenizar
     std::vector<llama_token> tokens_list(full_prompt.length() + 1);
     int n_tokens = llama_tokenize(vocab, full_prompt.c_str(), full_prompt.length(), tokens_list.data(), tokens_list.size(), true, false);
 
@@ -98,8 +82,6 @@ void GenerateResponse(std::string prompt) {
 
     if (llama_decode(ctx, batch) == 0) {
         int current_pos = n_tokens;
-        std::string response = "Nova: ";
-
         for (int i = 0; i < 512; i++) {
             auto * logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
             llama_token id = 0;
@@ -112,8 +94,6 @@ void GenerateResponse(std::string prompt) {
             char buf[128];
             int n = llama_token_to_piece(vocab, id, buf, sizeof(buf), 0, true);
             if (n > 0) {
-                response += std::string(buf, n);
-                // Actualizar la interfaz en tiempo real
                 std::lock_guard<std::mutex> lock(chat_mutex);
                 chat_history += std::string(buf, n);
             }
@@ -141,57 +121,61 @@ void GenerateResponse(std::string prompt) {
 int main() {
     llama_backend_init();
 
-    // Configurar ventana GLFW
-    glfwInit();
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    if (!glfwInit()) {
+        std::cerr << "Error critico: No se pudo inicializar GLFW." << std::endl;
+        system("pause");
+        return 1;
+    }
+
+    // Quitamos la restriccion de OpenGL 3.0 para que funcione en el Celeron
     GLFWwindow* window = glfwCreateWindow(800, 600, "Nova AI", NULL, NULL);
+    
+    if (!window) {
+        std::cerr << "Error critico: No se pudo crear la ventana. Tu tarjeta grafica no soporta OpenGL." << std::endl;
+        system("pause"); // Esto evita que la ventana se cierre y te deja leer el error
+        glfwTerminate();
+        return 1;
+    }
+
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
-    // Configurar ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(window, true);
-    ImGui_ImplOpenGL3_Init("#version 130");
+    
+    // Usar version 120 de OpenGL (compatible con tarjetas viejas)
+    ImGui_ImplOpenGL3_Init("#version 120");
 
-    // Bucle principal de la GUI
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        // Crear la ventana de Nova
         ImGui::SetNextWindowPos(ImVec2(0, 0));
         ImGui::SetNextWindowSize(io.DisplaySize);
         ImGui::Begin("Nova AI", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
 
         if (ImGui::Button("Cargar Modelo (.gguf)")) {
             std::string path = OpenFileDialog();
-            if (!path.empty()) {
-                LoadModel(path);
-            }
+            if (!path.empty()) LoadModel(path);
         }
         ImGui::SameLine();
         ImGui::Text("Modelo actual: %s", current_model_path.c_str());
 
         ImGui::Separator();
 
-        // Área de chat
         ImGui::BeginChild("Chat", ImVec2(0, -50), true);
         {
             std::lock_guard<std::mutex> lock(chat_mutex);
             ImGui::TextWrapped("%s", chat_history.c_str());
-            // Auto-scroll al final
-            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
-                ImGui::SetScrollHereY(1.0f);
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
         }
         ImGui::EndChild();
 
-        // Área de entrada de texto
         ImGui::PushItemWidth(-80);
         if (ImGui::InputText("##input", input_buffer, sizeof(input_buffer), ImGuiInputTextFlags_EnterReturnsTrue) && !is_generating) {
             if (strlen(input_buffer) > 0) {
@@ -224,8 +208,6 @@ int main() {
         }
 
         ImGui::End();
-
-        // Renderizar
         ImGui::Render();
         int display_w, display_h;
         glfwGetFramebufferSize(window, &display_w, &display_h);
@@ -236,7 +218,6 @@ int main() {
         glfwSwapBuffers(window);
     }
 
-    // Limpieza
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
@@ -246,6 +227,5 @@ int main() {
     if (model) llama_free_model(model);
     if (ctx) llama_free(ctx);
     llama_backend_free();
-
     return 0;
 }
