@@ -16,22 +16,21 @@
 #include <commdlg.h>
 #include <d3d11.h>
 
-// Variables globales
 llama_model * model = nullptr;
 llama_context * ctx = nullptr;
 const llama_vocab * vocab = nullptr;
 std::string current_model_path = "Ninguno";
-
+std::string chat_history = "Nova: ¡Hola! Soy Nova. Carga un modelo .gguf en la parte superior para comenzar a chatear.\n\n";
 char input_buffer[1024] = "";
-std::vector<std::pair<bool, std::string>> chat_messages; // true = Usuario, false = Nova
 std::atomic<bool> is_generating(false);
+std::atomic<bool> is_loading(false);
+std::mutex chat_mutex;
 
 ID3D11Device*            g_pd3dDevice = nullptr;
 ID3D11DeviceContext*     g_pd3dDeviceContext = nullptr;
 IDXGISwapChain*          g_pSwapChain = nullptr;
 ID3D11RenderTargetView*  g_mainRenderTargetView = nullptr;
 
-// Función para escribir logs
 void log_msg(const std::string& msg) {
     std::ofstream log("nova_log.txt", std::ios_base::app);
     log << msg << "\n";
@@ -89,60 +88,58 @@ std::string OpenFileDialog() {
     return "";
 }
 
-// Carga del modelo (SIN hilos separados para evitar crasheos)
-bool LoadModel(const std::string& path) {
+void LoadModel(const std::string& path) {
+    is_loading = true;
     log_msg("Iniciando carga del modelo: " + path);
-    
+
     if (model) { llama_free_model(model); model = nullptr; }
     if (ctx) { llama_free(ctx); ctx = nullptr; }
 
-    chat_messages.push_back({false, "[Sistema]: Cargando modelo... esto puede tardar un minuto."});
-    
     llama_backend_init();
-    log_msg("Backend inicializado");
-
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = 0;
-    log_msg("Intentando cargar modelo en memoria...");
     
+    // EVITAR MAPEO DE MEMORIA (Evita que el CPU se vaya al 100% y el programa se cierre)
+    model_params.use_mmap = false; 
+
     model = llama_load_model_from_file(path.c_str(), model_params);
-    
+
     if (!model) {
         log_msg("ERROR: llama_load_model_from_file devolvio NULL");
-        chat_messages.push_back({false, "[Error]: No se pudo cargar el modelo. Revisa el archivo nova_log.txt"});
-        return false;
+        std::lock_guard<std::mutex> lock(chat_mutex);
+        chat_history += "[Error]: No se pudo cargar el modelo.\n\n";
+        is_loading = false;
+        return;
     }
-    log_msg("Modelo cargado en RAM exitosamente");
 
     vocab = llama_model_get_vocab(model);
     llama_context_params ctx_params = llama_context_default_params();
-    
-    // FORZAR 1 SOLO HILO PARA EVITAR EL 100% DE CPU
     ctx_params.n_ctx = 512;
-    ctx_params.n_threads = 1;
+    ctx_params.n_threads = 1; // 1 hilo para no saturar el Celeron
     ctx_params.n_threads_batch = 1;
     
-    log_msg("Creando contexto...");
     ctx = llama_new_context_with_model(model, ctx_params);
-    
+
     if (!ctx) {
         log_msg("ERROR: llama_new_context_with_model devolvio NULL");
-        chat_messages.push_back({false, "[Error]: No hay memoria suficiente para el contexto."});
+        std::lock_guard<std::mutex> lock(chat_mutex);
+        chat_history += "[Error]: No hay RAM para el contexto.\n\n";
         llama_free_model(model); model = nullptr;
-        return false;
+        is_loading = false;
+        return;
     }
 
     current_model_path = path;
-    chat_messages.push_back({false, "[Sistema]: ¡Modelo cargado! Ya puedes escribir."});
-    log_msg("Contexto creado. Todo listo.");
-    return true;
+    std::lock_guard<std::mutex> lock(chat_mutex);
+    chat_history += "[Sistema]: Modelo cargado correctamente. Ya puedes escribir.\n\n";
+    log_msg("Modelo cargado exitosamente.");
+    is_loading = false;
 }
 
 void GenerateResponse(std::string prompt) {
     if (!model || !ctx) return;
     is_generating = true;
-    log_msg("Generando respuesta...");
-
+    
     std::string full_prompt = "Eres Nova, un asistente de IA amigable. Responde en español.\nUsuario: " + prompt + "\nNova: ";
     std::vector<llama_token> tokens_list(full_prompt.length() + 1);
     int n_tokens = llama_tokenize(vocab, full_prompt.c_str(), full_prompt.length(), tokens_list.data(), tokens_list.size(), true, false);
@@ -154,7 +151,8 @@ void GenerateResponse(std::string prompt) {
     }
     batch.n_tokens = n_tokens; batch.logits[batch.n_tokens - 1] = true;
 
-    chat_messages.push_back({false, ""}); // Burbuja vacía para la IA
+    std::lock_guard<std::mutex> lock(chat_mutex);
+    chat_history += "Nova: "; // Iniciar la respuesta
 
     if (llama_decode(ctx, batch) == 0) {
         int current_pos = n_tokens;
@@ -168,7 +166,9 @@ void GenerateResponse(std::string prompt) {
             
             char buf[128];
             int n = llama_token_to_piece(vocab, id, buf, sizeof(buf), 0, true);
-            if (n > 0) chat_messages.back().second += std::string(buf, n); // Añadir texto a la última burbuja
+            if (n > 0) {
+                chat_history += std::string(buf, n);
+            }
             
             llama_batch next_batch = llama_batch_init(1, 0, 1);
             next_batch.token[0] = id; next_batch.pos[0] = current_pos;
@@ -178,19 +178,20 @@ void GenerateResponse(std::string prompt) {
             if (llama_decode(ctx, next_batch)) { llama_batch_free(next_batch); break; }
             llama_batch_free(batch); batch = next_batch; current_pos++;
         }
+        chat_history += "\n\n";
     }
     llama_batch_free(batch);
     is_generating = false;
-    log_msg("Respuesta generada.");
 }
 
 int main() {
-    log_msg("--- INICIANDO NOVA ---");
+    log_msg("--- INICIANDO NOVA (ESCRITORIO) ---");
     try {
         if (!glfwInit()) return 1;
-
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        GLFWwindow* window = glfwCreateWindow(500, 700, "Nova AI", NULL, NULL); // Formato vertical (movil)
+        
+        // Ventana grande y espaciosa
+        GLFWwindow* window = glfwCreateWindow(1000, 750, "Nova AI", NULL, NULL);
         if (!window) return 1;
 
         HWND hwnd = glfwGetWin32Window(window);
@@ -200,21 +201,17 @@ int main() {
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         
-        // === ESTILO MODERNO (MODO OSCURO) ===
+        // Estilo de escritorio limpio
         ImGui::StyleColorsDark();
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowRounding = 0.0f;
-        style.FrameRounding = 15.0f; // Bordes muy redondeados
-        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.11f, 0.11f, 0.13f, 1.00f);
-        style.Colors[ImGuiCol_Button] = ImVec4(0.20f, 0.60f, 0.90f, 1.00f); // Azul brillante
-        style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.70f, 1.00f, 1.00f);
-        style.Colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.20f, 0.25f, 1.00f);
-        io.FontGlobalScale = 1.2f;
+        style.FrameRounding = 5.0f;
+        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.00f); // Fondo gris oscuro
+        style.Colors[ImGuiCol_Button] = ImVec4(0.20f, 0.60f, 0.90f, 1.00f);    // Botón azul
+        style.Colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);   // Input oscuro
 
         ImGui_ImplGlfw_InitForOther(window, true);
         ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
-
-        chat_messages.push_back({false, "¡Hola! Soy Nova. Selecciona un modelo .gguf para empezar."});
 
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
@@ -226,60 +223,47 @@ int main() {
             ImGui::SetNextWindowSize(io.DisplaySize);
             ImGui::Begin("NovaMain", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
 
-            // --- BARRA SUPERIOR ---
+            // BARRA SUPERIOR
             ImGui::BeginChild("TopBar", ImVec2(0, 60), false);
-            ImGui::SetCursorPosY(10);
-            ImGui::SetCursorPosX(10);
-            if (ImGui::Button("Seleccionar Modelo .gguf", ImVec2(220, 40))) {
+            ImGui::SetCursorPos(ImVec2(10, 10));
+            if (ImGui::Button("Cargar Modelo .gguf", ImVec2(180, 40))) {
                 std::string path = OpenFileDialog();
-                if (!path.empty()) LoadModel(path);
+                if (!path.empty()) std::thread(LoadModel, path).detach();
             }
             ImGui::SameLine();
-            ImGui::SetCursorPosY(20);
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Modelo: %s", current_model_path.c_str());
+            ImGui::SetCursorPosY(22);
+            if (is_loading) {
+                ImGui::TextColored(ImVec4(1, 1, 0, 1), "Cargando... (por favor espera)");
+            } else {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Modelo actual: %s", current_model_path.c_str());
+            }
             ImGui::EndChild();
 
-            // --- ÁREA DE CHAT (BURBUJAS) ---
-            ImGui::BeginChild("ChatArea", ImVec2(0, -80), false);
+            // ÁREA DE CHAT
+            ImGui::BeginChild("ChatArea", ImVec2(0, -60), true);
             {
-                for (const auto& msg : chat_messages) {
-                    ImVec2 textSize = ImGui::CalcTextSize(msg.second.c_str(), NULL, true, ImGui::GetWindowWidth() * 0.7f);
-                    
-                    // Posicionar la burbuja (Izquierda para Nova, Derecha para Usuario)
-                    float offsetX = msg.first ? (ImGui::GetWindowWidth() - textSize.x - 30) : 10.0f;
-                    if (offsetX < 10) offsetX = 10;
-                    
-                    ImGui::SetCursorPosX(offsetX);
-                    
-                    // Color de la burbuja
-                    ImVec4 bubbleColor = msg.first ? ImVec4(0.20f, 0.60f, 0.90f, 1.0f) : ImVec4(0.20f, 0.20f, 0.25f, 1.0f);
-                    
-                    // Dibujar burbuja
-                    ImGui::PushStyleColor(ImGuiCol_ChildBg, bubbleColor);
-                    ImGui::BeginChild(("msg" + std::to_string((uintptr_t)&msg)).c_str(), ImVec2(textSize.x + 20, 0), true, ImGuiWindowFlags_NoScrollbar);
-                    ImGui::TextWrapped("%s", msg.second.c_str());
-                    ImGui::EndChild();
-                    ImGui::PopStyleColor();
-                    ImGui::Dummy(ImVec2(0, 5));
-                }
-                
+                std::lock_guard<std::mutex> lock(chat_mutex);
+                ImGui::TextWrapped("%s", chat_history.c_str());
                 if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
             }
             ImGui::EndChild();
 
-            // --- ÁREA DE ENTRADA ---
-            ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 60);
+            // ÁREA DE ENTRADA
+            ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 50);
             ImGui::SetCursorPosX(10);
-            ImGui::PushItemWidth(ImGui::GetWindowWidth() - 100);
+            ImGui::PushItemWidth(ImGui::GetWindowWidth() - 120);
             bool enter_pressed = ImGui::InputText("##input", input_buffer, sizeof(input_buffer), ImGuiInputTextFlags_EnterReturnsTrue);
             ImGui::PopItemWidth();
             
             ImGui::SameLine();
             
-            if (ImGui::Button("Enviar", ImVec2(70, 40)) || enter_pressed) {
-                if (strlen(input_buffer) > 0 && !is_generating && model) {
+            if (ImGui::Button("Enviar", ImVec2(90, 35)) || enter_pressed) {
+                if (strlen(input_buffer) > 0 && !is_generating && model && !is_loading) {
                     std::string prompt(input_buffer);
-                    chat_messages.push_back({true, prompt});
+                    {
+                        std::lock_guard<std::mutex> lock(chat_mutex);
+                        chat_history += "Tú: " + prompt + "\n";
+                    }
                     input_buffer[0] = '\0';
                     std::thread(GenerateResponse, prompt).detach();
                 }
@@ -288,9 +272,9 @@ int main() {
             ImGui::End();
             ImGui::Render();
             
-            const float clear_color_with_alpha[4] = { 0.11f, 0.11f, 0.13f, 1.0f };
+            const float clear_color[4] = { 0.12f, 0.12f, 0.12f, 1.0f };
             g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
-            g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
+            g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color);
             ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
             g_pSwapChain->Present(1, 0);
         }
