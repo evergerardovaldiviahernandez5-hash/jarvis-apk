@@ -34,5 +34,5 @@ add_executable(Nova
 )
 
 target_include_directories(Nova PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backends)
-# Añadir d3d11 y dxgi para DirectX
-target_link_libraries(Nova PRIVATE llama ggml glfw d3d11 dxgi comdlg32 user32 shell32 ole32)
+# Añadimos d3dcompiler a la lista de librerías
+target_link_libraries(Nova PRIVATE llama ggml glfw d3d11 dxgi d3dcompiler comdlg32 user32 shell32 ole32)
