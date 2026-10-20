@@ -8,10 +8,13 @@
 #include "llama.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
-#include "imgui_impl_opengl3.h"
+#include "imgui_impl_dx11.h"
 #include <GLFW/glfw3.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
 #include <windows.h>
 #include <commdlg.h>
+#include <d3d11.h>
 
 llama_model * model = nullptr;
 llama_context * ctx = nullptr;
@@ -23,9 +26,52 @@ std::string chat_history = "Nova: ¡Hola! Soy Nova. Por favor, carga un modelo (
 std::atomic<bool> is_generating(false);
 std::mutex chat_mutex;
 
-// Función para imprimir errores de GLFW
-void glfw_error_callback(int error, const char* description) {
-    std::cerr << "GLFW Error " << error << ": " << description << std::endl;
+// Variables globales de DirectX
+ID3D11Device*            g_pd3dDevice = nullptr;
+ID3D11DeviceContext*     g_pd3dDeviceContext = nullptr;
+IDXGISwapChain*          g_pSwapChain = nullptr;
+ID3D11RenderTargetView*  g_mainRenderTargetView = nullptr;
+
+void CreateRenderTarget() {
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    if (pBackBuffer) {
+        g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
+        pBackBuffer->Release();
+    }
+}
+
+bool CreateDeviceD3D(HWND hWnd) {
+    DXGI_SWAP_CHAIN_DESC sd;
+    ZeroMemory(&sd, sizeof(sd));
+    sd.BufferCount = 2;
+    sd.BufferDesc.Width = 0;
+    sd.BufferDesc.Height = 0;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferDesc.RefreshRate.Numerator = 60;
+    sd.BufferDesc.RefreshRate.Denominator = 1;
+    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = hWnd;
+    sd.SampleDesc.Count = 1;
+    sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+    UINT createDeviceFlags = 0;
+    D3D_FEATURE_LEVEL featureLevel;
+    const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
+    if (D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, &featureLevel, &g_pd3dDeviceContext) != S_OK)
+        return false;
+
+    CreateRenderTarget();
+    return true;
+}
+
+void CleanupDeviceD3D() {
+    if (g_mainRenderTargetView) { g_mainRenderTargetView->Release(); g_mainRenderTargetView = nullptr; }
+    if (g_pSwapChain) { g_pSwapChain->Release(); g_pSwapChain = nullptr; }
+    if (g_pd3dDeviceContext) { g_pd3dDeviceContext->Release(); g_pd3dDeviceContext = nullptr; }
+    if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = nullptr; }
 }
 
 std::string OpenFileDialog() {
@@ -101,47 +147,49 @@ void GenerateResponse(std::string prompt) {
 
 int main() {
     try {
-        std::cout << "=== NOVA SE ESTA INICIANDO ===" << std::endl;
+        std::cout << "=== NOVA SE ESTA INICIANDO (DIRECTX 11) ===" << std::endl;
         std::cout << "Presiona ENTER para iniciar..." << std::endl;
         std::cin.get();
 
         std::cout << "[1/4] Iniciando GLFW..." << std::endl;
-        glfwSetErrorCallback(glfw_error_callback);
         if (!glfwInit()) {
             std::cerr << "ERROR: Fallo al iniciar GLFW." << std::endl;
             system("pause"); return 1;
         }
 
-        // MUY IMPORTANTE: Quitamos las restricciones de version para que use lo que tenga el sistema
-        glfwDefaultWindowHints();
+        // Quitamos OpenGL, le decimos a GLFW que NO cree ningun contexto grafico.
+        // DirectX se encargara de dibujar.
+        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 
         std::cout << "[2/4] Creando ventana..." << std::endl;
         GLFWwindow* window = glfwCreateWindow(800, 600, "Nova AI", NULL, NULL);
         if (!window) {
-            std::cerr << "ERROR: Fallo al crear la ventana. (Revisa los errores de GLFW arriba)" << std::endl;
+            std::cerr << "ERROR: Fallo al crear la ventana." << std::endl;
             system("pause"); glfwTerminate(); return 1;
         }
 
-        std::cout << "[3/4] Configurando ImGui..." << std::endl;
-        glfwMakeContextCurrent(window);
-        glfwSwapInterval(1);
-        glfwShowWindow(window); // Mostrar recien ahora
+        std::cout << "[3/4] Configurando DirectX 11 e ImGui..." << std::endl;
+        HWND hwnd = glfwGetWin32Window(window);
+        if (!CreateDeviceD3D(hwnd)) {
+            std::cerr << "ERROR: Fallo al crear el dispositivo DirectX 11." << std::endl;
+            system("pause"); glfwDestroyWindow(window); glfwTerminate(); return 1;
+        }
+
+        glfwShowWindow(window);
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         ImGui::StyleColorsDark();
-        ImGui_ImplGlfw_InitForOpenGL(window, true);
         
-        // Intentar inicializar OpenGL3 con la version mas basica
-        if (!ImGui_ImplOpenGL3_Init("#version 130")) {
-            std::cerr << "ERROR: No se pudo inicializar el backend de OpenGL 3." << std::endl;
-        }
+        // Inicializar ImGui para DirectX 11
+        ImGui_ImplGlfw_InitForOther(window, true);
+        ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
         std::cout << "[4/4] Entrando al bucle principal..." << std::endl;
         while (!glfwWindowShouldClose(window)) {
             glfwPollEvents();
-            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplDX11_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
 
@@ -192,18 +240,19 @@ int main() {
 
             ImGui::End();
             ImGui::Render();
-            int display_w, display_h;
-            glfwGetFramebufferSize(window, &display_w, &display_h);
-            glViewport(0, 0, display_w, display_h);
-            glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-            glfwSwapBuffers(window);
+            
+            // Renderizado con DirectX 11
+            const float clear_color_with_alpha[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
+            g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
+            g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
+            ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+            g_pSwapChain->Present(1, 0); // Con VSync
         }
 
-        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplDX11_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
+        CleanupDeviceD3D();
         glfwDestroyWindow(window);
         glfwTerminate();
 

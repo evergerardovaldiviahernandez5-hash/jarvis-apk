@@ -30,8 +30,9 @@ add_executable(Nova
     ${IMGUI_DIR}/imgui_tables.cpp
     ${IMGUI_DIR}/imgui_widgets.cpp
     ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
-    ${IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
 )
 
 target_include_directories(Nova PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backends)
-target_link_libraries(Nova PRIVATE llama ggml glfw opengl32 gdi32 comdlg32 user32 shell32 ole32)
+# Añadir d3d11 y dxgi para DirectX
+target_link_libraries(Nova PRIVATE llama ggml glfw d3d11 dxgi comdlg32 user32 shell32 ole32)
