@@ -22,8 +22,9 @@ const llama_vocab * vocab = nullptr;
 std::string current_model_path = "Ninguno";
 
 char input_buffer[1024] = "";
-std::string chat_history = "Nova: ¡Hola! Soy Nova. Por favor, carga un modelo (.gguf) para empezar a chatear.\n\n";
+std::string chat_history = "Nova AI: ¡Hola! Soy Nova. Selecciona un modelo .gguf arriba para comenzar.\n\n";
 std::atomic<bool> is_generating(false);
+std::atomic<bool> is_loading(false);
 std::mutex chat_mutex;
 
 ID3D11Device*            g_pd3dDevice = nullptr;
@@ -87,44 +88,50 @@ std::string OpenFileDialog() {
 }
 
 void LoadModel(const std::string& path) {
+    is_loading = true;
     try {
         if (model) { llama_free_model(model); model = nullptr; }
         if (ctx) { llama_free(ctx); ctx = nullptr; }
 
         std::lock_guard<std::mutex> lock(chat_mutex);
-        chat_history += "\n[Sistema]: Cargando modelo... (esto puede tardar unos segundos)\n";
+        chat_history += "[Sistema]: Cargando modelo... (esto puede tardar unos segundos)\n";
         
+        // INICIALIZAR EL BACKEND AQUI ES SEGURO
+        llama_backend_init();
+
         llama_model_params model_params = llama_model_default_params();
         model_params.n_gpu_layers = 0;
         model = llama_load_model_from_file(path.c_str(), model_params);
         
         if (!model) {
-            chat_history += "[Error]: No se pudo cargar el modelo. Posiblemente no hay suficiente memoria RAM.\n\n";
+            chat_history += "[Error]: No se pudo cargar. Posiblemente no hay suficiente RAM.\n\n";
+            is_loading = false;
             return;
         }
 
         vocab = llama_model_get_vocab(model);
         llama_context_params ctx_params = llama_context_default_params();
         
-        // REDUCIR EL CONTEXTO A 512 PARA AHORRAR RAM
-        ctx_params.n_ctx = 512;
+        ctx_params.n_ctx = 512; // Bajo consumo de RAM
         ctx_params.n_threads = 2;
         ctx_params.n_threads_batch = 2;
         
         ctx = llama_new_context_with_model(model, ctx_params);
         
         if (!ctx) {
-            chat_history += "[Error]: El modelo se cargó, pero no hay RAM para crear el contexto.\n\n";
+            chat_history += "[Error]: No hay RAM para crear el contexto.\n\n";
             llama_free_model(model); model = nullptr;
+            is_loading = false;
             return;
         }
 
         current_model_path = path;
-        chat_history += "[Sistema]: Modelo cargado correctamente.\n\n";
-    } catch (const std::exception& e) {
+        chat_history += "[Sistema]: ¡Modelo cargado con éxito! Ya puedes chatear.\n\n";
+    } catch (...) {
         std::lock_guard<std::mutex> lock(chat_mutex);
-        chat_history += std::string("\n[Error Crítico al cargar]: ") + e.what() + "\n\n";
+        chat_history += "\n[Error Crítico]: Fallo en la carga.\n\n";
     }
+    is_loading = false;
 }
 
 void GenerateResponse(std::string prompt) {
@@ -166,48 +173,41 @@ void GenerateResponse(std::string prompt) {
             std::lock_guard<std::mutex> lock(chat_mutex); chat_history += "\n\n";
         }
         llama_batch_free(batch);
-    } catch (const std::exception& e) {
+    } catch (...) {
         std::lock_guard<std::mutex> lock(chat_mutex);
-        chat_history += std::string("\n[Error Crítico al generar]: ") + e.what() + "\n\n";
+        chat_history += "\n[Error Crítico al generar]\n\n";
     }
     is_generating = false;
 }
 
 int main() {
     try {
-        std::cout << "=== NOVA SE ESTA INICIANDO ===" << std::endl;
-        std::cout << "Presiona ENTER para iniciar..." << std::endl;
-        std::cin.get();
-
-        // INICIALIZAR EL BACKEND ES CRUCIAL
-        llama_backend_init();
-
-        if (!glfwInit()) {
-            std::cerr << "ERROR: Fallo al iniciar GLFW." << std::endl;
-            system("pause"); return 1;
-        }
+        // Ya no pedimos ENTER, la ventana abre directo
+        if (!glfwInit()) return 1;
 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-
-        GLFWwindow* window = glfwCreateWindow(800, 600, "Nova AI", NULL, NULL);
-        if (!window) {
-            std::cerr << "ERROR: Fallo al crear la ventana." << std::endl;
-            system("pause"); glfwTerminate(); return 1;
-        }
+        GLFWwindow* window = glfwCreateWindow(900, 700, "Nova AI", NULL, NULL);
+        if (!window) return 1;
 
         HWND hwnd = glfwGetWin32Window(window);
-        if (!CreateDeviceD3D(hwnd)) {
-            std::cerr << "ERROR: Fallo al crear DirectX 11." << std::endl;
-            system("pause"); glfwDestroyWindow(window); glfwTerminate(); return 1;
-        }
+        if (!CreateDeviceD3D(hwnd)) return 1;
 
-        glfwShowWindow(window);
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
-        ImGui::StyleColorsDark();
         
+        // === DISEÑO DE LA INTERFAZ (ESTILO MODERNO) ===
+        ImGui::StyleColorsDark();
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowRounding = 5.0f;
+        style.FrameRounding = 5.0f;
+        style.ItemSpacing = ImVec2(10, 10);
+        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
+        style.Colors[ImGuiCol_Button] = ImVec4(0.20f, 0.40f, 0.70f, 1.00f);
+        style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.50f, 0.85f, 1.00f);
+        style.Colors[ImGuiCol_FrameBg] = ImVec4(0.15f, 0.15f, 0.18f, 1.00f);
+        io.FontGlobalScale = 1.1f; // Letra un poco más grande
+
         ImGui_ImplGlfw_InitForOther(window, true);
         ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
 
@@ -217,21 +217,33 @@ int main() {
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
 
+            // Crear ventana que ocupa toda la pantalla
             ImGui::SetNextWindowPos(ImVec2(0, 0));
             ImGui::SetNextWindowSize(io.DisplaySize);
-            ImGui::Begin("Nova AI", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+            ImGui::Begin("NovaMain", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
 
-            if (ImGui::Button("Cargar Modelo (.gguf)")) {
+            // --- BARRA SUPERIOR ---
+            ImGui::BeginChild("TopBar", ImVec2(0, 50), false);
+            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "NOVA AI");
+            ImGui::SameLine();
+            if (ImGui::Button("Seleccionar Modelo .gguf", ImVec2(200, 0))) {
                 std::string path = OpenFileDialog();
                 if (!path.empty()) {
-                    std::thread(LoadModel, path).detach(); // Cargar en hilo aparte para no congelar la UI
+                    std::thread(LoadModel, path).detach();
                 }
             }
             ImGui::SameLine();
-            ImGui::Text("Modelo actual: %s", current_model_path.c_str());
+            if (is_loading) {
+                ImGui::TextColored(ImVec4(1, 1, 0, 1), "Cargando modelo...");
+            } else {
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Modelo: %s", current_model_path.c_str());
+            }
+            ImGui::EndChild();
+
             ImGui::Separator();
 
-            ImGui::BeginChild("Chat", ImVec2(0, -50), true);
+            // --- ÁREA DE CHAT ---
+            ImGui::BeginChild("Chat", ImVec2(0, -60), true);
             {
                 std::lock_guard<std::mutex> lock(chat_mutex);
                 ImGui::TextWrapped("%s", chat_history.c_str());
@@ -239,41 +251,41 @@ int main() {
             }
             ImGui::EndChild();
 
-            ImGui::PushItemWidth(-80);
-            if (ImGui::InputText("##input", input_buffer, sizeof(input_buffer), ImGuiInputTextFlags_EnterReturnsTrue) && !is_generating) {
-                if (strlen(input_buffer) > 0) {
+            // --- ÁREA DE ENTRADA ---
+            ImGui::PushItemWidth(-100); // Deja espacio para el botón
+            bool enter_pressed = ImGui::InputText("##input", input_buffer, sizeof(input_buffer), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::PopItemWidth();
+            
+            ImGui::SameLine();
+            
+            if (ImGui::Button("Enviar", ImVec2(90, 0)) || enter_pressed) {
+                if (strlen(input_buffer) > 0 && !is_generating && model) {
                     std::string prompt(input_buffer);
-                    { std::lock_guard<std::mutex> lock(chat_mutex); chat_history += "Tú: " + prompt + "\n"; }
+                    {
+                        std::lock_guard<std::mutex> lock(chat_mutex);
+                        chat_history += "Tú: " + prompt + "\nNova: ";
+                    }
                     std::thread(GenerateResponse, prompt).detach();
                     input_buffer[0] = '\0';
                 }
             }
-            ImGui::PopItemWidth();
-            ImGui::SameLine();
-            
             if (is_generating) {
-                ImGui::TextColored(ImVec4(1, 1, 0, 1), "Pensando...");
-            } else {
-                if (ImGui::Button("Enviar")) {
-                    if (strlen(input_buffer) > 0) {
-                        std::string prompt(input_buffer);
-                        { std::lock_guard<std::mutex> lock(chat_mutex); chat_history += "Tú: " + prompt + "\n"; }
-                        std::thread(GenerateResponse, prompt).detach();
-                        input_buffer[0] = '\0';
-                    }
-                }
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(1, 1, 0, 1), "Escribiendo...");
             }
 
             ImGui::End();
+
             ImGui::Render();
             
-            const float clear_color_with_alpha[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
+            const float clear_color_with_alpha[4] = { 0.08f, 0.08f, 0.10f, 1.0f };
             g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
             g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color_with_alpha);
             ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
             g_pSwapChain->Present(1, 0);
         }
 
+        // Limpieza
         ImGui_ImplDX11_Shutdown();
         ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
@@ -284,9 +296,8 @@ int main() {
         if (model) llama_free_model(model);
         if (ctx) llama_free(ctx);
         llama_backend_free();
-    } catch (const std::exception& e) {
-        std::cerr << "ERROR FATAL: " << e.what() << std::endl;
-        system("pause");
+    } catch (...) {
+        return 1;
     }
     return 0;
 }
