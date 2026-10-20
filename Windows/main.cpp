@@ -99,8 +99,7 @@ void LoadModel(const std::string& path) {
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = 0;
     
-    // EVITAR MAPEO DE MEMORIA (Evita que el CPU se vaya al 100% y el programa se cierre)
-    model_params.use_mmap = false; 
+    // LA LÍNEA DE use_mmap FUE ELIMINADA AQUÍ
 
     model = llama_load_model_from_file(path.c_str(), model_params);
 
@@ -190,7 +189,6 @@ int main() {
         if (!glfwInit()) return 1;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         
-        // Ventana grande y espaciosa
         GLFWwindow* window = glfwCreateWindow(1000, 750, "Nova AI", NULL, NULL);
         if (!window) return 1;
 
@@ -201,14 +199,13 @@ int main() {
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         
-        // Estilo de escritorio limpio
         ImGui::StyleColorsDark();
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowRounding = 0.0f;
         style.FrameRounding = 5.0f;
-        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.00f); // Fondo gris oscuro
-        style.Colors[ImGuiCol_Button] = ImVec4(0.20f, 0.60f, 0.90f, 1.00f);    // Botón azul
-        style.Colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);   // Input oscuro
+        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
+        style.Colors[ImGuiCol_Button] = ImVec4(0.20f, 0.60f, 0.90f, 1.00f);
+        style.Colors[ImGuiCol_FrameBg] = ImVec4(0.20f, 0.20f, 0.20f, 1.00f);
 
         ImGui_ImplGlfw_InitForOther(window, true);
         ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
@@ -223,7 +220,6 @@ int main() {
             ImGui::SetNextWindowSize(io.DisplaySize);
             ImGui::Begin("NovaMain", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
 
-            // BARRA SUPERIOR
             ImGui::BeginChild("TopBar", ImVec2(0, 60), false);
             ImGui::SetCursorPos(ImVec2(10, 10));
             if (ImGui::Button("Cargar Modelo .gguf", ImVec2(180, 40))) {
@@ -239,7 +235,6 @@ int main() {
             }
             ImGui::EndChild();
 
-            // ÁREA DE CHAT
             ImGui::BeginChild("ChatArea", ImVec2(0, -60), true);
             {
                 std::lock_guard<std::mutex> lock(chat_mutex);
@@ -248,7 +243,6 @@ int main() {
             }
             ImGui::EndChild();
 
-            // ÁREA DE ENTRADA
             ImGui::SetCursorPosY(ImGui::GetWindowHeight() - 50);
             ImGui::SetCursorPosX(10);
             ImGui::PushItemWidth(ImGui::GetWindowWidth() - 120);
