@@ -12,13 +12,26 @@ set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 
-# Forzar MSVC a usar solo SSE2
-if(MSVC)
-    add_compile_options(/arch:SSE2)
-endif()
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 set(LLAMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp")
-add_subdirectory(${LLAMA_DIR} llama.cpp_build)
+set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../imgui")
+set(GLFW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../glfw")
 
-add_executable(Nova main.cpp)
-target_link_libraries(Nova PRIVATE llama ggml)
+add_subdirectory(${LLAMA_DIR} llama.cpp_build)
+add_subdirectory(${GLFW_DIR} glfw_build)
+
+add_executable(Nova
+    ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+    ${IMGUI_DIR}/imgui.cpp
+    ${IMGUI_DIR}/imgui_draw.cpp
+    ${IMGUI_DIR}/imgui_tables.cpp
+    ${IMGUI_DIR}/imgui_widgets.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_glfw.cpp
+    ${IMGUI_DIR}/backends/imgui_impl_dx11.cpp
+)
+
+target_include_directories(Nova PRIVATE ${IMGUI_DIR} ${IMGUI_DIR}/backends)
+target_link_libraries(Nova PRIVATE llama ggml glfw d3d11 dxgi d3dcompiler comdlg32 user32 shell32 ole32)
