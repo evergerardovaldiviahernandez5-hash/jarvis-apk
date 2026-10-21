@@ -20,12 +20,18 @@ llama_model * model = nullptr;
 llama_context * ctx = nullptr;
 const llama_vocab * vocab = nullptr;
 std::string current_model_path = "Ninguno";
-std::string chat_history = ""; // Vacío al inicio para mostrar la pantalla de bienvenida
 char input_buffer[2048] = "";
 std::atomic<bool> is_generating(false);
 std::atomic<bool> is_loading(false);
-std::atomic<bool> has_chat = false;
 std::mutex chat_mutex;
+
+// Estructura para separar los mensajes
+struct ChatMessage {
+    bool is_user;
+    std::string text;
+    bool is_generating_this;
+};
+std::vector<ChatMessage> messages;
 
 ID3D11Device*            g_pd3dDevice = nullptr;
 ID3D11DeviceContext*     g_pd3dDeviceContext = nullptr;
@@ -98,13 +104,11 @@ void LoadModel(const std::string& path) {
 
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = 0;
-    
     model = llama_load_model_from_file(path.c_str(), model_params);
 
     if (!model) {
         std::lock_guard<std::mutex> lock(chat_mutex);
-        has_chat = true;
-        chat_history += "Sistema: [Error] No se pudo cargar el modelo. Verifica el archivo.\n\n";
+        messages.push_back({false, "Sistema: [Error] No se pudo cargar el modelo.", false});
         is_loading = false;
         return;
     }
@@ -112,26 +116,21 @@ void LoadModel(const std::string& path) {
     vocab = llama_model_get_vocab(model);
     llama_context_params ctx_params = llama_context_default_params();
     ctx_params.n_ctx = 512;
-    ctx_params.n_threads = 1; // 1 hilo para el Celeron
+    ctx_params.n_threads = 1;
     ctx_params.n_threads_batch = 1;
-    
     ctx = llama_new_context_with_model(model, ctx_params);
 
     if (!ctx) {
         std::lock_guard<std::mutex> lock(chat_mutex);
-        has_chat = true;
-        chat_history += "Sistema: [Error] No hay RAM suficiente.\n\n";
+        messages.push_back({false, "Sistema: [Error] No hay RAM suficiente.", false});
         llama_free_model(model); model = nullptr;
         is_loading = false;
         return;
     }
 
     current_model_path = path;
-    {
-        std::lock_guard<std::mutex> lock(chat_mutex);
-        has_chat = true;
-        chat_history += "Sistema: Modelo cargado. ¡Ya puedes chatear!\n\n";
-    }
+    std::lock_guard<std::mutex> lock(chat_mutex);
+    messages.push_back({false, "Sistema: ¡Modelo cargado con éxito! Nova está lista.", false});
     is_loading = false;
 }
 
@@ -139,7 +138,9 @@ void GenerateResponse(std::string prompt) {
     if (!model || !ctx) return;
     is_generating = true;
     
-    std::string full_prompt = "Eres Nova, un asistente de IA amigable. Responde en español.\nUsuario: " + prompt + "\nNova: ";
+    // Formato estricto para evitar que la IA escriba por el usuario
+    std::string full_prompt = "<|im_start|>system\nEres Nova, un asistente de IA útil y amigable. Responde en español.<|im_end|>\n<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n";
+    
     std::vector<llama_token> tokens_list(full_prompt.length() + 1);
     int n_tokens = llama_tokenize(vocab, full_prompt.c_str(), full_prompt.length(), tokens_list.data(), tokens_list.size(), true, false);
 
@@ -152,7 +153,7 @@ void GenerateResponse(std::string prompt) {
 
     {
         std::lock_guard<std::mutex> lock(chat_mutex);
-        chat_history += "Nova: ";
+        messages.push_back({false, "", true}); // Burbuja para la IA
     }
 
     if (llama_decode(ctx, batch) == 0) {
@@ -163,13 +164,20 @@ void GenerateResponse(std::string prompt) {
             for (int j = 0; j < llama_vocab_n_tokens(vocab); j++) {
                 if (logits[j] > max_logit) { max_logit = logits[j]; id = j; }
             }
+            
+            // Si el modelo intenta cerrar el diálogo o escribir por el usuario, detenerse
             if (id == llama_vocab_eos(vocab)) break;
             
             char buf[128];
             int n = llama_token_to_piece(vocab, id, buf, sizeof(buf), 0, true);
             if (n > 0) {
+                std::string piece(buf, n);
+                // EL ARREGLO DEL BUCLE: Si genera "user" o "Usuario" o "<|", cortamos la generación
+                if (piece.find("User:") != std::string::npos || piece.find("Usuario:") != std::string::npos || piece.find("<|im_end|>") != std::string::npos) {
+                    break; 
+                }
                 std::lock_guard<std::mutex> lock(chat_mutex);
-                chat_history += std::string(buf, n);
+                messages.back().text += piece;
             }
             
             llama_batch next_batch = llama_batch_init(1, 0, 1);
@@ -180,65 +188,20 @@ void GenerateResponse(std::string prompt) {
             if (llama_decode(ctx, next_batch)) { llama_batch_free(next_batch); break; }
             llama_batch_free(batch); batch = next_batch; current_pos++;
         }
-        std::lock_guard<std::mutex> lock(chat_mutex);
-        chat_history += "\n\n";
     }
     llama_batch_free(batch);
+    std::lock_guard<std::mutex> lock(chat_mutex);
+    messages.back().is_generating_this = false;
     is_generating = false;
 }
 
-// Helper para el diseño
-void DrawWelcomeScreen(float width) {
-    ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing();
-    
-    // Cuadro naranja simulando el logo
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.35f, 1.0f)); // Naranja
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.45f, 0.35f, 1.0f));
-    ImGui::SetCursorPosX((width - 60) / 2);
-    ImGui::Button(" * * ", ImVec2(60, 60)); 
-    ImGui::PopStyleColor(2);
-
-    ImGui::Spacing();
-    
-    ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Usar fuente normal pero más grande
-    float textWidth = ImGui::CalcTextSize("¿En qué puedo ayudarte?").x;
-    ImGui::SetCursorPosX((width - textWidth) / 2);
-    ImGui::TextColored(ImVec4(1,1,1,1), "¿En qué puedo ayudarte?");
-    
-    ImGui::Spacing();
-    std::string sub = "Escribe lo que necesites: código, análisis, redacción o cualquier pregunta.";
-    float subWidth = ImGui::CalcTextSize(sub.c_str()).x;
-    ImGui::SetCursorPosX((width - subWidth) / 2);
-    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", sub.c_str());
-    
-    ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing();
-
-    // Botones de sugerencia
-    const char* suggestions[] = {
-        "Explícame qué es una API REST y dame un ejemplo práctico en JavaScript. ->",
-        "Escribe una función en Python que lea un CSV y devuelva estadísticas. ->",
-        "Ayúdame a redactar un correo profesional ->"
-    };
-
-    for (int i = 0; i < 3; i++) {
-        ImGui::SetCursorPosX(20);
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.15f, 0.15f, 1.0f)); // Botón oscuro
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
-        if (ImGui::Button(suggestions[i], ImVec2(width - 40, 50))) {
-            strcpy(input_buffer, suggestions[i]);
-        }
-        ImGui::PopStyleColor(2);
-        ImGui::Spacing();
-    }
-}
-
 int main() {
-    log_msg("--- INICIANDO NOVA GUI (V3) ---");
+    log_msg("--- INICIANDO NOVA GUI (CLAUDE STYLE) ---");
     try {
         if (!glfwInit()) return 1;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         
-        GLFWwindow* window = glfwCreateWindow(900, 750, "Nova AI", NULL, NULL);
+        GLFWwindow* window = glfwCreateWindow(900, 700, "Nova AI", NULL, NULL);
         if (!window) return 1;
 
         HWND hwnd = glfwGetWin32Window(window);
@@ -248,16 +211,16 @@ int main() {
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         
-        // === ESTILO IDÉNTICO A LA FOTO ===
+        // === ESTILO CLAUDE (LIMPIO, ELEGANTE) ===
         ImGui::StyleColorsDark();
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowRounding = 0.0f;
-        style.FrameRounding = 8.0f;
-        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.07f, 0.07f, 0.07f, 1.00f); // Fondo casi negro
-        style.Colors[ImGuiCol_FrameBg] = ImVec4(0.14f, 0.14f, 0.14f, 1.00f); // Fondo del input
-        style.Colors[ImGuiCol_Button] = ImVec4(0.14f, 0.14f, 0.14f, 1.00f); // Botón oscuro
-
-        io.FontGlobalScale = 1.2f; // Letra grande
+        style.FrameRounding = 6.0f;
+        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.11f, 0.11f, 0.11f, 1.00f); // Fondo gris oscuro
+        style.Colors[ImGuiCol_ChildBg] = ImVec4(0.11f, 0.11f, 0.11f, 1.00f);
+        style.Colors[ImGuiCol_Button] = ImVec4(0.85f, 0.45f, 0.35f, 1.00f);    // Naranja Claude
+        style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.95f, 0.55f, 0.45f, 1.00f);
+        style.Colors[ImGuiCol_FrameBg] = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);   // Input gris claro
 
         ImGui_ImplGlfw_InitForOther(window, true);
         ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
@@ -273,85 +236,100 @@ int main() {
             ImGui::Begin("NovaMain", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
 
             // --- BARRA SUPERIOR ---
-            ImGui::SetCursorPos(ImVec2(15, 15));
-            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "|||  Nueva conversación");
-            
-            // Botón de Elegir Modelo a la derecha
-            ImGui::SetCursorPos(ImVec2(io.DisplaySize.x - 200, 10));
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.14f, 0.14f, 0.14f, 1.0f));
-            if (ImGui::Button(" (o) Elegir modelo  v ", ImVec2(180, 40))) {
+            ImGui::SetCursorPos(ImVec2(20, 20));
+            ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "Nova AI");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "|  Asistente Local");
+
+            ImGui::SetCursorPos(ImVec2(io.DisplaySize.x - 200, 15));
+            if (ImGui::Button("Cargar Modelo .gguf", ImVec2(180, 30))) {
                 std::string path = OpenFileDialog();
                 if (!path.empty()) std::thread(LoadModel, path).detach();
             }
-            ImGui::PopStyleColor();
 
             ImGui::SetCursorPosY(60);
             ImGui::Separator();
 
-            // --- ÁREA PRINCIPAL ---
-            float areaHeight = io.DisplaySize.y - 150; // Espacio para arriba y abajo
+            // --- ÁREA DE CHAT (BLOQUES ESTILO CLAUDE) ---
             ImGui::SetCursorPos(ImVec2(0, 65));
-            ImGui::BeginChild("MainArea", ImVec2(0, areaHeight), false);
+            ImGui::BeginChild("ChatArea", ImVec2(0, io.DisplaySize.y - 140), false);
             {
-                if (!has_chat) {
-                    DrawWelcomeScreen(io.DisplaySize.x);
-                } else {
-                    ImGui::SetCursorPosX(20);
-                    ImGui::PushTextWrapPos(io.DisplaySize.x - 20);
-                    std::lock_guard<std::mutex> lock(chat_mutex);
-                    ImGui::TextUnformatted(chat_history.c_str());
-                    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-                        ImGui::SetScrollHereY(1.0f);
+                std::lock_guard<std::mutex> lock(chat_mutex);
+                
+                if (messages.empty()) {
+                    // Pantalla de bienvenida
+                    ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing();
+                    ImGui::SetCursorPosX((io.DisplaySize.x - 400) / 2);
+                    ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.35f, 1.0f), "         * * *");
+                    ImGui::SetCursorPosX((io.DisplaySize.x - 400) / 2);
+                    ImGui::Text("¿En qué puedo ayudarte hoy?");
+                }
+
+                for (size_t i = 0; i < messages.size(); i++) {
+                    auto& msg = messages[i];
+                    
+                    if (msg.is_user) {
+                        // Bloque Usuario (Gris)
+                        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
+                        ImGui::SetCursorPosX(20);
+                        ImGui::BeginChild(("msg_u" + std::to_string(i)).c_str(), ImVec2(io.DisplaySize.x - 40, 0), true);
+                        ImGui::TextWrapped("%s", msg.text.c_str());
+                        ImGui::EndChild();
+                        ImGui::PopStyleColor();
+                    } else {
+                        // Bloque IA (Fondo oscuro, sin borde)
+                        ImGui::SetCursorPosX(20);
+                        ImGui::BeginChild(("msg_a" + std::to_string(i)).c_str(), ImVec2(io.DisplaySize.x - 40, 0), false);
+                        ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.35f, 1.0f), "* Nova");
+                        ImGui::TextWrapped("%s", msg.text.c_str());
+                        if (msg.is_generating_this) {
+                            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Escribiendo...");
+                        }
+                        ImGui::EndChild();
                     }
-                    ImGui::PopTextWrapPos();
+                    ImGui::Spacing();
+                }
+                
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10) {
+                    ImGui::SetScrollHereY(1.0f);
                 }
             }
             ImGui::EndChild();
 
-            // --- BARRA DE ENTRADA INFERIOR ---
-            ImGui::SetCursorPos(ImVec2(20, io.DisplaySize.y - 70));
-            
-            // Caja de texto gigante
+            // --- CAJA DE TEXTO FLOTANTE (Estilo Claude) ---
+            ImGui::SetCursorPos(ImVec2(20, io.DisplaySize.y - 65));
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(15, 15));
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
             ImGui::PushItemWidth(io.DisplaySize.x - 100);
-            bool enter_pressed = ImGui::InputTextWithHint("##input", "Escribe un mensaje...", input_buffer, sizeof(input_buffer), ImGuiInputTextFlags_EnterReturnsTrue);
+            
+            bool enter_pressed = ImGui::InputTextWithHint("##input", "Escribe tu mensaje aquí...", input_buffer, sizeof(input_buffer), ImGuiInputTextFlags_EnterReturnsTrue);
+            
             ImGui::PopItemWidth();
+            ImGui::PopStyleColor();
             ImGui::PopStyleVar();
 
-            // Botón de enviar (flecha)
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.35f, 1.0f)); // Botón naranja
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
-            bool send_clicked = ImGui::Button(" ^ ", ImVec2(50, 50));
-            ImGui::PopStyleColor(2);
-
-            if (is_loading) {
-                ImGui::SetCursorPos(ImVec2(20, io.DisplaySize.y - 90));
-                ImGui::TextColored(ImVec4(1, 0.8f, 0.2f, 1), "Cargando modelo...");
-            }
+            
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.35f, 1.0f));
+            bool send_clicked = ImGui::Button(" ^ ", ImVec2(50, 45));
+            ImGui::PopStyleColor();
 
             if ((send_clicked || enter_pressed) && strlen(input_buffer) > 0 && !is_generating) {
                 if (model) {
                     std::string prompt(input_buffer);
-                    has_chat = true;
                     {
                         std::lock_guard<std::mutex> lock(chat_mutex);
-                        chat_history += "Tú: " + prompt + "\n";
+                        messages.push_back({true, prompt, false});
                     }
                     input_buffer[0] = '\0';
                     std::thread(GenerateResponse, prompt).detach();
-                } else {
-                    has_chat = true;
-                    std::lock_guard<std::mutex> lock(chat_mutex);
-                    chat_history += "Sistema: [Error] Primero debes cargar un modelo.\n\n";
-                    input_buffer[0] = '\0';
                 }
             }
 
             ImGui::End();
             ImGui::Render();
             
-            const float clear_color[4] = { 0.07f, 0.07f, 0.07f, 1.0f };
+            const float clear_color[4] = { 0.11f, 0.11f, 0.11f, 1.0f };
             g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, nullptr);
             g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, clear_color);
             ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
