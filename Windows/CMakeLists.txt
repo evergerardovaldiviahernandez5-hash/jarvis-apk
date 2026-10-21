@@ -12,9 +12,13 @@ set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 
+# Forzar MSVC a usar solo SSE2
+if(MSVC)
+    add_compile_options(/arch:SSE2)
+endif()
+
 set(LLAMA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../llama.cpp")
 add_subdirectory(${LLAMA_DIR} llama.cpp_build)
 
-# Compilar solo la consola
 add_executable(Nova main.cpp)
 target_link_libraries(Nova PRIVATE llama ggml)
