@@ -5,6 +5,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 #include "llama.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -25,7 +26,6 @@ std::atomic<bool> is_generating(false);
 std::atomic<bool> is_loading(false);
 std::mutex chat_mutex;
 
-// Estructura para separar los mensajes
 struct ChatMessage {
     bool is_user;
     std::string text;
@@ -130,7 +130,7 @@ void LoadModel(const std::string& path) {
 
     current_model_path = path;
     std::lock_guard<std::mutex> lock(chat_mutex);
-    messages.push_back({false, "Sistema: ¡Modelo cargado con éxito! Nova está lista.", false});
+    messages.push_back({false, "Sistema: ¡Modelo cargado con éxito!", false});
     is_loading = false;
 }
 
@@ -138,8 +138,8 @@ void GenerateResponse(std::string prompt) {
     if (!model || !ctx) return;
     is_generating = true;
     
-    // Formato estricto para evitar que la IA escriba por el usuario
-    std::string full_prompt = "<|im_start|>system\nEres Nova, un asistente de IA útil y amigable. Responde en español.<|im_end|>\n<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n";
+    // Prompt simplificado para evitar que el modelo se confunda con tokens especiales
+    std::string full_prompt = "Eres Nova, un asistente de IA útil y amigable. Responde en español.\n\nUsuario: " + prompt + "\nNova: ";
     
     std::vector<llama_token> tokens_list(full_prompt.length() + 1);
     int n_tokens = llama_tokenize(vocab, full_prompt.c_str(), full_prompt.length(), tokens_list.data(), tokens_list.size(), true, false);
@@ -153,8 +153,11 @@ void GenerateResponse(std::string prompt) {
 
     {
         std::lock_guard<std::mutex> lock(chat_mutex);
-        messages.push_back({false, "", true}); // Burbuja para la IA
+        messages.push_back({false, "", true});
     }
+
+    std::string generated_text = "";
+    auto last_update = std::chrono::steady_clock::now();
 
     if (llama_decode(ctx, batch) == 0) {
         int current_pos = n_tokens;
@@ -165,19 +168,35 @@ void GenerateResponse(std::string prompt) {
                 if (logits[j] > max_logit) { max_logit = logits[j]; id = j; }
             }
             
-            // Si el modelo intenta cerrar el diálogo o escribir por el usuario, detenerse
             if (id == llama_vocab_eos(vocab)) break;
             
             char buf[128];
             int n = llama_token_to_piece(vocab, id, buf, sizeof(buf), 0, true);
             if (n > 0) {
                 std::string piece(buf, n);
-                // EL ARREGLO DEL BUCLE: Si genera "user" o "Usuario" o "<|", cortamos la generación
-                if (piece.find("User:") != std::string::npos || piece.find("Usuario:") != std::string::npos || piece.find("<|im_end|>") != std::string::npos) {
-                    break; 
+                generated_text += piece;
+                
+                // EL FRENO DE EMERGENCIA: Cortar si el modelo intenta escribir por el usuario
+                if (generated_text.find("<|im_end|>") != std::string::npos || 
+                    generated_text.find("Usuario:") != std::string::npos || 
+                    generated_text.find("User:") != std::string::npos) {
+                    
+                    size_t pos = generated_text.find("<|im_end|>");
+                    if (pos != std::string::npos) generated_text = generated_text.substr(0, pos);
+                    pos = generated_text.find("Usuario:");
+                    if (pos != std::string::npos) generated_text = generated_text.substr(0, pos);
+                    pos = generated_text.find("User:");
+                    if (pos != std::string::npos) generated_text = generated_text.substr(0, pos);
+                    break;
                 }
-                std::lock_guard<std::mutex> lock(chat_mutex);
-                messages.back().text += piece;
+
+                // Actualizar UI cada 100ms para no congelar
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_update).count() > 100) {
+                    std::lock_guard<std::mutex> lock(chat_mutex);
+                    messages.back().text = generated_text;
+                    last_update = now;
+                }
             }
             
             llama_batch next_batch = llama_batch_init(1, 0, 1);
@@ -190,18 +209,21 @@ void GenerateResponse(std::string prompt) {
         }
     }
     llama_batch_free(batch);
+    
     std::lock_guard<std::mutex> lock(chat_mutex);
+    messages.back().text = generated_text;
     messages.back().is_generating_this = false;
     is_generating = false;
 }
 
 int main() {
-    log_msg("--- INICIANDO NOVA GUI (CLAUDE STYLE) ---");
+    log_msg("--- INICIANDO NOVA GUI (V4) ---");
     try {
         if (!glfwInit()) return 1;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         
-        GLFWwindow* window = glfwCreateWindow(900, 700, "Nova AI", NULL, NULL);
+        // Tamaño de ventana: 960x540
+        GLFWwindow* window = glfwCreateWindow(960, 540, "Nova AI", NULL, NULL);
         if (!window) return 1;
 
         HWND hwnd = glfwGetWin32Window(window);
@@ -211,16 +233,15 @@ int main() {
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         
-        // === ESTILO CLAUDE (LIMPIO, ELEGANTE) ===
         ImGui::StyleColorsDark();
         ImGuiStyle& style = ImGui::GetStyle();
         style.WindowRounding = 0.0f;
         style.FrameRounding = 6.0f;
-        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.11f, 0.11f, 0.11f, 1.00f); // Fondo gris oscuro
+        style.Colors[ImGuiCol_WindowBg] = ImVec4(0.11f, 0.11f, 0.11f, 1.00f);
         style.Colors[ImGuiCol_ChildBg] = ImVec4(0.11f, 0.11f, 0.11f, 1.00f);
-        style.Colors[ImGuiCol_Button] = ImVec4(0.85f, 0.45f, 0.35f, 1.00f);    // Naranja Claude
+        style.Colors[ImGuiCol_Button] = ImVec4(0.85f, 0.45f, 0.35f, 1.00f);
         style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.95f, 0.55f, 0.45f, 1.00f);
-        style.Colors[ImGuiCol_FrameBg] = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);   // Input gris claro
+        style.Colors[ImGuiCol_FrameBg] = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
 
         ImGui_ImplGlfw_InitForOther(window, true);
         ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
@@ -250,14 +271,13 @@ int main() {
             ImGui::SetCursorPosY(60);
             ImGui::Separator();
 
-            // --- ÁREA DE CHAT (BLOQUES ESTILO CLAUDE) ---
+            // --- ÁREA DE CHAT ---
             ImGui::SetCursorPos(ImVec2(0, 65));
             ImGui::BeginChild("ChatArea", ImVec2(0, io.DisplaySize.y - 140), false);
             {
                 std::lock_guard<std::mutex> lock(chat_mutex);
                 
                 if (messages.empty()) {
-                    // Pantalla de bienvenida
                     ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing();
                     ImGui::SetCursorPosX((io.DisplaySize.x - 400) / 2);
                     ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.35f, 1.0f), "         * * *");
@@ -269,7 +289,6 @@ int main() {
                     auto& msg = messages[i];
                     
                     if (msg.is_user) {
-                        // Bloque Usuario (Gris)
                         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
                         ImGui::SetCursorPosX(20);
                         ImGui::BeginChild(("msg_u" + std::to_string(i)).c_str(), ImVec2(io.DisplaySize.x - 40, 0), true);
@@ -277,7 +296,6 @@ int main() {
                         ImGui::EndChild();
                         ImGui::PopStyleColor();
                     } else {
-                        // Bloque IA (Fondo oscuro, sin borde)
                         ImGui::SetCursorPosX(20);
                         ImGui::BeginChild(("msg_a" + std::to_string(i)).c_str(), ImVec2(io.DisplaySize.x - 40, 0), false);
                         ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.35f, 1.0f), "* Nova");
@@ -296,7 +314,7 @@ int main() {
             }
             ImGui::EndChild();
 
-            // --- CAJA DE TEXTO FLOTANTE (Estilo Claude) ---
+            // --- CAJA DE TEXTO ---
             ImGui::SetCursorPos(ImVec2(20, io.DisplaySize.y - 65));
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(15, 15));
             ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
