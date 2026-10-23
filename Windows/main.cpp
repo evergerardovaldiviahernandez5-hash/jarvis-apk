@@ -5,6 +5,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <chrono>
 #include "llama.h"
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -29,7 +30,6 @@ std::mutex chat_mutex;
 struct ChatMessage {
     bool is_user;
     std::string text;
-    bool is_generating_this;
 };
 std::vector<ChatMessage> messages;
 
@@ -37,12 +37,6 @@ ID3D11Device*            g_pd3dDevice = nullptr;
 ID3D11DeviceContext*     g_pd3dDeviceContext = nullptr;
 IDXGISwapChain*          g_pSwapChain = nullptr;
 ID3D11RenderTargetView*  g_mainRenderTargetView = nullptr;
-
-void log_msg(const std::string& msg) {
-    std::ofstream log("nova_log.txt", std::ios_base::app);
-    log << msg << "\n";
-    log.close();
-}
 
 void CreateRenderTarget() {
     ID3D11Texture2D* pBackBuffer = nullptr;
@@ -97,8 +91,6 @@ std::string OpenFileDialog() {
 
 void LoadModel(const std::string& path) {
     is_loading = true;
-    log_msg("Iniciando carga: " + path);
-
     if (model) { llama_free_model(model); model = nullptr; }
     if (ctx) { llama_free(ctx); ctx = nullptr; }
 
@@ -108,7 +100,7 @@ void LoadModel(const std::string& path) {
 
     if (!model) {
         std::lock_guard<std::mutex> lock(chat_mutex);
-        messages.push_back({false, "Sistema: [Error] No se pudo cargar el modelo.", false});
+        messages.push_back({false, "Sistema: [Error] No se pudo cargar el modelo."});
         is_loading = false;
         return;
     }
@@ -122,7 +114,7 @@ void LoadModel(const std::string& path) {
 
     if (!ctx) {
         std::lock_guard<std::mutex> lock(chat_mutex);
-        messages.push_back({false, "Sistema: [Error] No hay RAM suficiente.", false});
+        messages.push_back({false, "Sistema: [Error] No hay RAM suficiente."});
         llama_free_model(model); model = nullptr;
         is_loading = false;
         return;
@@ -130,8 +122,7 @@ void LoadModel(const std::string& path) {
 
     current_model_path = path;
     std::lock_guard<std::mutex> lock(chat_mutex);
-    messages.push_back({false, "Sistema: ¡Modelo cargado con éxito! Nova está lista.", false});
-    scroll_to_bottom = true;
+    messages.push_back({false, "Sistema: ¡Modelo cargado con éxito! Nova está lista."});
     is_loading = false;
 }
 
@@ -139,8 +130,8 @@ void GenerateResponse(std::string prompt) {
     if (!model || !ctx) return;
     is_generating = true;
     
-    // Prompt con formato ChatML (Qwen)
-    std::string full_prompt = "<|im_start|>system\nEres Nova, un asistente de IA. Responde de forma concisa en español.<|im_end|>\n<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n";
+    // FORMATO OFICIAL DE QWEN (ChatML) - Evita los signos de interrogación
+    std::string full_prompt = "<|im_start|>system\nEres Nova, un asistente de IA útil y amigable. Responde siempre en español.<|im_end|>\n<|im_start|>user\n" + prompt + "<|im_end|>\n<|im_start|>assistant\n";
     
     std::vector<llama_token> tokens_list(full_prompt.length() + 1);
     int n_tokens = llama_tokenize(vocab, full_prompt.c_str(), full_prompt.length(), tokens_list.data(), tokens_list.size(), true, false);
@@ -154,13 +145,16 @@ void GenerateResponse(std::string prompt) {
 
     {
         std::lock_guard<std::mutex> lock(chat_mutex);
-        messages.push_back({false, "", true});
-        scroll_to_bottom = true;
+        messages.push_back({false, ""});
     }
+    scroll_to_bottom = true;
+
+    std::string generated_text = "";
+    auto last_update = std::chrono::steady_clock::now();
 
     if (llama_decode(ctx, batch) == 0) {
         int current_pos = n_tokens;
-        for (int i = 0; i < 256; i++) { // Límite de 256 tokens para evitar que se cuelgue
+        for (int i = 0; i < 512; i++) {
             auto * logits = llama_get_logits_ith(ctx, batch.n_tokens - 1);
             llama_token id = 0; float max_logit = -1e9;
             for (int j = 0; j < llama_vocab_n_tokens(vocab); j++) {
@@ -174,17 +168,27 @@ void GenerateResponse(std::string prompt) {
             if (n > 0) {
                 std::string piece(buf, n);
                 
-                // FRENO DE EMERGENCIA: Detener si intenta generar tokens de control
-                if (piece.find("<|im_end|>") != std::string::npos || 
-                    piece.find("<|im_start|>") != std::string::npos || 
-                    piece.find("Usuario:") != std::string::npos ||
-                    piece.find("User:") != std::string::npos) {
+                // Cortar si intenta generar tokens especiales o hablar por el usuario
+                if (piece.find("<|im_end|>") != std::string::npos) {
+                    piece = piece.substr(0, piece.find("<|im_end|>"));
+                    generated_text += piece;
                     break;
                 }
+                if (piece.find("Usuario:") != std::string::npos) {
+                    piece = piece.substr(0, piece.find("Usuario:"));
+                    generated_text += piece;
+                    break;
+                }
+                generated_text += piece;
 
-                std::lock_guard<std::mutex> lock(chat_mutex);
-                messages.back().text += piece;
-                scroll_to_bottom = true;
+                // Actualizar UI sin colapsar el procesador
+                auto now = std::chrono::steady_clock::now();
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(now - last_update).count() > 80) {
+                    std::lock_guard<std::mutex> lock(chat_mutex);
+                    messages.back().text = generated_text;
+                    scroll_to_bottom = true;
+                    last_update = now;
+                }
             }
             
             llama_batch next_batch = llama_batch_init(1, 0, 1);
@@ -197,19 +201,18 @@ void GenerateResponse(std::string prompt) {
         }
     }
     llama_batch_free(batch);
+    
     std::lock_guard<std::mutex> lock(chat_mutex);
-    messages.back().is_generating_this = false;
+    messages.back().text = generated_text;
     scroll_to_bottom = true;
     is_generating = false;
 }
 
 int main() {
-    log_msg("--- INICIANDO NOVA GUI (960x540) ---");
     try {
         if (!glfwInit()) return 1;
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         
-        // Ventana de 960x540
         GLFWwindow* window = glfwCreateWindow(960, 540, "Nova AI", NULL, NULL);
         if (!window) return 1;
 
@@ -229,9 +232,8 @@ int main() {
         style.Colors[ImGuiCol_Button] = ImVec4(0.85f, 0.45f, 0.35f, 1.00f);
         style.Colors[ImGuiCol_ButtonHovered] = ImVec4(0.95f, 0.55f, 0.45f, 1.00f);
         style.Colors[ImGuiCol_FrameBg] = ImVec4(0.18f, 0.18f, 0.18f, 1.00f);
-
-        // Fuente un poco más pequeña para la resolución 960x540
-        io.FontGlobalScale = 1.0f; 
+        style.Colors[ImGuiCol_ScrollbarBg] = ImVec4(0.11f, 0.11f, 0.11f, 1.00f);
+        style.Colors[ImGuiCol_ScrollbarGrab] = ImVec4(0.30f, 0.30f, 0.30f, 1.00f);
 
         ImGui_ImplGlfw_InitForOther(window, true);
         ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
@@ -246,55 +248,52 @@ int main() {
             ImGui::SetNextWindowSize(io.DisplaySize);
             ImGui::Begin("NovaMain", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar);
 
-            // --- BARRA SUPERIOR ---
-            ImGui::SetCursorPos(ImVec2(15, 15));
+            // BARRA SUPERIOR (Responsive)
+            ImGui::SetCursorPos(ImVec2(20, 20));
             ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "Nova AI");
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "|  Asistente Local");
 
-            ImGui::SetCursorPos(ImVec2(io.DisplaySize.x - 180, 10));
-            if (ImGui::Button("Cargar Modelo .gguf", ImVec2(160, 30))) {
+            ImGui::SetCursorPos(ImVec2(io.DisplaySize.x - 200, 15));
+            if (ImGui::Button("Cargar Modelo .gguf", ImVec2(180, 30))) {
                 std::string path = OpenFileDialog();
                 if (!path.empty()) std::thread(LoadModel, path).detach();
             }
-
-            ImGui::SetCursorPosY(50);
+            ImGui::SetCursorPosY(60);
             ImGui::Separator();
 
-            // --- ÁREA DE CHAT ---
-            ImGui::SetCursorPos(ImVec2(0, 55));
-            ImGui::BeginChild("ChatArea", ImVec2(0, io.DisplaySize.y - 120), false);
+            // ÁREA DE CHAT (Responsive y con scroll)
+            ImGui::SetCursorPos(ImVec2(0, 65));
+            ImGui::BeginChild("ChatArea", ImVec2(0, io.DisplaySize.y - 140), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
             {
                 std::lock_guard<std::mutex> lock(chat_mutex);
                 
                 if (messages.empty()) {
-                    ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing();
-                    ImGui::SetCursorPosX((io.DisplaySize.x - 200) / 2);
-                    ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.35f, 1.0f), "Nova AI");
-                    ImGui::SetCursorPosX((io.DisplaySize.x - 300) / 2);
+                    ImGui::Spacing(); ImGui::Spacing(); ImGui::Spacing();
+                    ImGui::SetCursorPosX((io.DisplaySize.x - 400) / 2);
+                    ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.35f, 1.0f), "         * * *");
+                    ImGui::SetCursorPosX((io.DisplaySize.x - 400) / 2);
                     ImGui::Text("¿En qué puedo ayudarte hoy?");
                 }
 
                 for (size_t i = 0; i < messages.size(); i++) {
                     auto& msg = messages[i];
+                    ImGui::PushTextWrapPos(io.DisplaySize.x - 40);
                     
                     if (msg.is_user) {
                         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.18f, 0.18f, 0.18f, 1.0f));
-                        ImGui::SetCursorPosX(15);
-                        ImGui::BeginChild(("msg_u" + std::to_string(i)).c_str(), ImVec2(io.DisplaySize.x - 30, 0), true);
+                        ImGui::SetCursorPosX(20);
+                        ImGui::BeginChild(("msg_u" + std::to_string(i)).c_str(), ImVec2(io.DisplaySize.x - 40, 0), true);
                         ImGui::TextWrapped("%s", msg.text.c_str());
                         ImGui::EndChild();
                         ImGui::PopStyleColor();
                     } else {
-                        ImGui::SetCursorPosX(15);
-                        ImGui::BeginChild(("msg_a" + std::to_string(i)).c_str(), ImVec2(io.DisplaySize.x - 30, 0), false);
+                        ImGui::SetCursorPosX(20);
                         ImGui::TextColored(ImVec4(0.85f, 0.45f, 0.35f, 1.0f), "* Nova");
+                        ImGui::SetCursorPosX(20);
                         ImGui::TextWrapped("%s", msg.text.c_str());
-                        if (msg.is_generating_this) {
-                            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Escribiendo...");
-                        }
-                        ImGui::EndChild();
                     }
+                    ImGui::PopTextWrapPos();
                     ImGui::Spacing();
                 }
                 
@@ -305,22 +304,20 @@ int main() {
             }
             ImGui::EndChild();
 
-            // --- CAJA DE TEXTO INFERIOR ---
-            ImGui::SetCursorPos(ImVec2(15, io.DisplaySize.y - 55));
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10, 10));
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
-            ImGui::PushItemWidth(io.DisplaySize.x - 80);
+            // CAJA DE TEXTO (Responsive)
+            ImGui::SetCursorPos(ImVec2(20, io.DisplaySize.y - 65));
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(15, 15));
+            ImGui::PushItemWidth(io.DisplaySize.x - 100);
             
             bool enter_pressed = ImGui::InputTextWithHint("##input", "Escribe tu mensaje aquí...", input_buffer, sizeof(input_buffer), ImGuiInputTextFlags_EnterReturnsTrue);
             
             ImGui::PopItemWidth();
-            ImGui::PopStyleColor();
             ImGui::PopStyleVar();
 
             ImGui::SameLine();
             
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.45f, 0.35f, 1.0f));
-            bool send_clicked = ImGui::Button(" ^ ", ImVec2(40, 35));
+            bool send_clicked = ImGui::Button(" ^ ", ImVec2(50, 45));
             ImGui::PopStyleColor();
 
             if ((send_clicked || enter_pressed) && strlen(input_buffer) > 0 && !is_generating) {
@@ -328,7 +325,7 @@ int main() {
                     std::string prompt(input_buffer);
                     {
                         std::lock_guard<std::mutex> lock(chat_mutex);
-                        messages.push_back({true, prompt, false});
+                        messages.push_back({true, prompt});
                     }
                     input_buffer[0] = '\0';
                     std::thread(GenerateResponse, prompt).detach();
